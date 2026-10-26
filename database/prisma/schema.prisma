@@ -1,6 +1,7 @@
 // MindRise Database Schema
 // PostgreSQL via Prisma ORM
-// Privacy by Design: Strict segregation between VerifiedIdentity and public Profile
+// SRS Reference: MindRise SRS v1.3
+// Privacy by Design: Two-Layer Identity Architecture (Private Verified Identity vs Public Anonymous Profile)
 
 generator client {
   provider = "prisma-client-js"
@@ -11,144 +12,548 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// =============================================================================
+// ENUMS
+// =============================================================================
+
 enum UserRole {
-  YOUTH
+  USER
   MODERATOR
   ADMIN
 }
 
 enum AccountStatus {
   ACTIVE
+  RESTRICTED
   SUSPENDED
   BANNED
-  DELETION_PENDING
 }
 
-enum AssessmentType {
-  STRESS_ANXIETY
-  MOTIVATION_BURNOUT
+enum Language {
+  EN
+  AM
+}
+
+enum VerificationChannel {
+  SMS
+  EMAIL
+}
+
+enum AssessmentDomain {
+  STRESS
+  ANXIETY
+  LOW_MOTIVATION
   EMOTIONAL_EXHAUSTION
-  GENERAL_WELLBEING
+  LOSS_OF_PURPOSE
 }
 
-enum SeverityLevel {
-  MINIMAL
-  MILD
-  MODERATE
-  SEVERE
+enum RoutineStatus {
+  ACTIVE
+  PAUSED
 }
 
-// Core User Account Record
+enum ReactionType {
+  SUPPORT
+}
+
+enum ReportTargetType {
+  POST
+  COMMENT
+  ACCOUNT
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  DISMISSED
+  ACTIONED
+}
+
+enum CrisisSource {
+  ASSESSMENT
+  POST
+}
+
+enum CrisisPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum CrisisFlagStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum ModerationActionType {
+  WARN
+  SUSPEND
+  BAN
+  REMOVE_CONTENT
+  REVERSE_RESTRICTION
+}
+
+enum AutoRestrictionStatus {
+  ACTIVE
+  EXPIRED
+  REVERSED
+}
+
+// =============================================================================
+// 1. IDENTITY & PRIVACY LAYER (TWO-LAYER IDENTITY MODEL)
+// =============================================================================
+
+/// Core User account entity.
+/// Tracks system roles, status, and account lifecycle.
 model User {
-  id               String          @id @default(uuid())
-  role             UserRole        @default(YOUTH)
-  status           AccountStatus   @default(ACTIVE)
-  verified         Boolean         @default(false)
-  restrictedUntil  DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id                String        @id @default(uuid()) @db.Uuid
+  role              UserRole      @default(USER)
+  status            AccountStatus @default(ACTIVE)
+  preferredLanguage Language      @default(AM)
+  deletedAt         DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
-  // 1-to-1 Strictly Private Verified Identity
+  // 1:1 Private Verified Identity
   verifiedIdentity VerifiedIdentity?
 
-  // 1-to-1 Public Anonymous Profile
-  profile          Profile?
+  // 1:1 Public Anonymous Profile
+  profile Profile?
 
-  // Relational Modules
-  assessments      SelfAssessment[]
-  routines         DailyRoutine[]
+  // Verification & Audit
+  verificationCodes          VerificationCode[]
+  identityAccessLogsAuthored IdentityAccessLog[] @relation("Accessor")
 
+  // Self-Assessment Module
+  assessmentAttempts AssessmentAttempt[]
+
+  // Routines & Gamification
+  routines     Routine[]
+  userProgress UserProgress?
+  userBadges   UserBadge[]
+
+  // Community Activity
+  posts            Post[]
+  comments         Comment[]
+  reactions        Reaction[]
+  reportsSubmitted Report[]   @relation("Reporter")
+
+  // Safety & Moderation
+  crisisFlags              CrisisFlag[]
+  moderationActionsReceived ModerationAction[] @relation("TargetUser")
+  moderationActionsAuthored ModerationAction[] @relation("Moderator")
+  autoRestrictions         AutoRestriction[]
+
+  @@index([status])
+  @@index([deletedAt])
   @@map("users")
 }
 
-// -----------------------------------------------------------------------------
-// PRIVACY CRITICAL: VerifiedIdentity
-// Stores PII used purely for account verification, anti-sybil, and safety escalations.
-// NEVER joined or queried in public community or profile routes.
-// -----------------------------------------------------------------------------
+/// PRIVACY CRITICAL (SRS 5.4, FR-1.1):
+/// Contains real-world Personal Identifiable Information (PII).
+/// NEVER returned in public API payloads or visible to peer community.
+/// Cascade deletion scrubs this record completely on account deletion.
 model VerifiedIdentity {
-  id                 String    @id @default(uuid())
-  userId             String    @unique
-  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  encryptedRealName  String    // AES-256-GCM ciphertext
-  encryptedPhone     String?   // AES-256-GCM ciphertext
-  encryptedEmail     String?   // AES-256-GCM ciphertext
-  phoneHash          String?   @unique // One-way hash for duplicate account prevention
-  emailHash          String?   @unique // One-way hash for duplicate account prevention
-  isPhoneVerified    Boolean   @default(false)
-  isEmailVerified    Boolean   @default(false)
-  verificationCode   String?
-  codeExpiresAt      DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @unique @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName  String
+  lastName   String
+  phone      String?
+  email      String?
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
+  accessLogs IdentityAccessLog[]
+
+  // Note: CHECK ("phone" IS NOT NULL OR "email" IS NOT NULL)
+  // and partial unique indexes for active accounts (FR-1.5) are enforced via migration SQL.
+  @@index([phone])
+  @@index([email])
   @@map("verified_identities")
 }
 
-// Public Anonymous Profile (Safe to query for community interactions)
-model Profile {
-  id            String          @id @default(uuid())
-  userId        String          @unique
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  handle        String          @unique // e.g. "AbyssiniaSeeker", "SelamVibes"
-  avatarUrl     String?         // Stored on Supabase Storage
-  bio           String?
-  preferredLang String          @default("am") // "am" or "en"
-  points        Int             @default(0)
-  currentStreak Int             @default(0)
-  longestStreak Int             @default(0)
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+/// Verification OTP codes.
+/// Stores code hashes only (never plain text codes).
+model VerificationCode {
+  id         String              @id @default(uuid()) @db.Uuid
+  userId     String              @db.Uuid
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel    VerificationChannel
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int                 @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
 
-  communityPosts CommunityPost[]
+  @@index([userId, channel])
+  @@index([expiresAt])
+  @@map("verification_codes")
+}
+
+/// PUBLIC IDENTITY (FR-1.3):
+/// The only identity exposed on community discussions, leaderboards, and reactions.
+model Profile {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @unique @db.Uuid
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anonymousHandle String   @unique // Case-insensitive unique index added via SQL
+  avatarUrl       String?
+  bio             String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@map("profiles")
 }
 
-// Self-Assessment Module (Encrypted Responses)
-model SelfAssessment {
-  id                 String          @id @default(uuid())
-  userId             String
-  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type               AssessmentType
-  encryptedResponses String          // AES-256-GCM encrypted payload
-  score              Int
-  severity           SeverityLevel
-  crisisFlagged      Boolean         @default(false)
-  createdAt          DateTime        @default(now())
+/// AUDIT LOG (SRS 5.4):
+/// Logs every access to VerifiedIdentity data for regulatory and privacy compliance.
+model IdentityAccessLog {
+  id               String           @id @default(uuid()) @db.Uuid
+  accessedById     String?          @db.Uuid
+  accessedBy       User?            @relation("Accessor", fields: [accessedById], references: [id], onDelete: SetNull)
+  targetIdentityId String           @db.Uuid
+  targetIdentity   VerifiedIdentity @relation(fields: [targetIdentityId], references: [id], onDelete: Cascade)
+  action           String
+  reason           String
+  ipAddress        String?
+  userAgent        String?
+  createdAt        DateTime         @default(now())
 
-  @@index([userId])
-  @@map("self_assessments")
+  @@index([targetIdentityId])
+  @@index([accessedById])
+  @@map("identity_access_logs")
 }
 
-// Daily Routines & Habit Tracking
-model DailyRoutine {
-  id               String    @id @default(uuid())
-  userId           String
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title            String
-  description      String?
-  targetDaysPerWeek Int      @default(7)
-  completedToday   Boolean   @default(false)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+// =============================================================================
+// 2. SELF-ASSESSMENT MODULE
+// =============================================================================
 
-  @@index([userId])
-  @@map("daily_routines")
+/// Templates defining domains (Stress, Anxiety, etc.) and risk thresholds.
+model AssessmentTemplate {
+  id            String           @id @default(uuid()) @db.Uuid
+  domain        AssessmentDomain
+  titleEn       String
+  titleAm       String
+  descriptionEn String?
+  descriptionAm String?
+  version       Int              @default(1)
+  riskThreshold Int
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  questions AssessmentQuestion[]
+  attempts  AssessmentAttempt[]
+
+  @@unique([domain, version])
+  @@map("assessment_templates")
 }
 
-// Anonymous Peer Support Community
-model CommunityPost {
-  id          String    @id @default(uuid())
-  profileId   String
-  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+/// Individual questions associated with an assessment template.
+model AssessmentQuestion {
+  id         String             @id @default(uuid()) @db.Uuid
+  templateId String             @db.Uuid
+  template   AssessmentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  textEn     String
+  textAm     String
+  order      Int
+  isRiskItem Boolean            @default(false)
+  scoring    Json
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@index([templateId, order])
+  @@map("assessment_questions")
+}
+
+/// User's assessment attempt.
+/// PRIVACY REQUIREMENT: Answers JSON must be encrypted at application layer (AES-256-GCM)
+/// and visible only to the owning user.
+model AssessmentAttempt {
+  id          String             @id @default(uuid()) @db.Uuid
+  userId      String             @db.Uuid
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  templateId  String             @db.Uuid
+  template    AssessmentTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  answers     Json
+  score       Int
+  summaryKey  String
+  riskFlagged Boolean            @default(false)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  crisisFlags CrisisFlag[]
+
+  @@index([userId, createdAt])
+  @@map("assessment_attempts")
+}
+
+// =============================================================================
+// 3. ROUTINES & GAMIFICATION MODULE
+// =============================================================================
+
+/// Individual habit/routine tracked by a user. Supports soft delete.
+model Routine {
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @db.Uuid
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   title       String
-  content     String
-  category    String    // e.g., "University Stress", "Career & Job Hunt", "Hope & Motivation"
-  isFlagged   Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  description String?
+  status      RoutineStatus @default(ACTIVE)
+  deletedAt   DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  @@index([profileId])
-  @@map("community_posts")
+  completions RoutineCompletion[]
+
+  @@index([userId, status])
+  @@map("routines")
+}
+
+/// Curated bilingual starter routines suggested to users.
+model StarterRoutine {
+  id            String   @id @default(uuid()) @db.Uuid
+  titleEn       String
+  titleAm       String
+  descriptionEn String?
+  descriptionAm String?
+  category      String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("starter_routines")
+}
+
+/// Completion record for a routine. Unique per routine per calendar day.
+model RoutineCompletion {
+  id            String   @id @default(uuid()) @db.Uuid
+  routineId     String   @db.Uuid
+  routine       Routine  @relation(fields: [routineId], references: [id], onDelete: Cascade)
+  completedDate DateTime @db.Date
+  createdAt     DateTime @default(now())
+
+  @@unique([routineId, completedDate])
+  @@index([completedDate])
+  @@map("routine_completions")
+}
+
+/// Gamified progress metrics (streaks, points).
+model UserProgress {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @unique @db.Uuid
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  points            Int       @default(0)
+  currentStreak     Int       @default(0)
+  longestStreak     Int       @default(0)
+  lastCompletedDate DateTime? @db.Date
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@map("user_progress")
+}
+
+/// Available badges in the reward system.
+model Badge {
+  id            String   @id @default(uuid()) @db.Uuid
+  slug          String   @unique
+  nameEn        String
+  nameAm        String
+  descriptionEn String
+  descriptionAm String
+  iconUrl       String?
+  pointsRequired Int     @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  userBadges UserBadge[]
+
+  @@map("badges")
+}
+
+/// Badges earned by users.
+model UserBadge {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId   String   @db.Uuid
+  badge     Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  awardedAt DateTime @default(now())
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+// =============================================================================
+// 4. COMMUNITY LAYER (ANONYMOUS PEER SUPPORT)
+// =============================================================================
+
+/// Topic spaces (e.g. Job Search, University Pressure).
+model Topic {
+  id            String   @id @default(uuid()) @db.Uuid
+  slug          String   @unique
+  nameEn        String
+  nameAm        String
+  descriptionEn String?
+  descriptionAm String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  posts Post[]
+
+  @@map("topics")
+}
+
+/// Community forum post.
+/// On user deletion, authorId becomes null (SetNull) to preserve thread integrity as "deleted user".
+model Post {
+  id        String    @id @default(uuid()) @db.Uuid
+  authorId  String?   @db.Uuid
+  author    User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  topicId   String    @db.Uuid
+  topic     Topic     @relation(fields: [topicId], references: [id], onDelete: Restrict)
+  title     String
+  content   String
+  isPinned  Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  comments    Comment[]
+  reactions   Reaction[]
+  crisisFlags CrisisFlag[]
+
+  @@index([topicId, createdAt])
+  @@index([authorId])
+  @@map("posts")
+}
+
+/// Comment on a community post.
+/// On user deletion, authorId becomes null (SetNull) to keep thread context.
+model Comment {
+  id        String    @id @default(uuid()) @db.Uuid
+  postId    String    @db.Uuid
+  post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String?   @db.Uuid
+  author    User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  content   String
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([postId, createdAt])
+  @@index([authorId])
+  @@map("comments")
+}
+
+/// Peer reaction (e.g. SUPPORT). Unique per user per post.
+model Reaction {
+  id        String       @id @default(uuid()) @db.Uuid
+  postId    String       @db.Uuid
+  post      Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String       @db.Uuid
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      ReactionType @default(SUPPORT)
+  createdAt DateTime     @default(now())
+
+  @@unique([postId, userId, type])
+  @@index([postId])
+  @@map("reactions")
+}
+
+/// Flagged content or user reports.
+/// Reporter ID is strictly preserved for moderation and never exposed to the reported user.
+model Report {
+  id          String           @id @default(uuid()) @db.Uuid
+  reporterId  String?          @db.Uuid
+  reporter    User?            @relation("Reporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  targetType  ReportTargetType
+  targetId    String           @db.Uuid
+  reason      String
+  status      ReportStatus     @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([targetType, targetId])
+  @@index([status])
+  @@map("reports")
+}
+
+// =============================================================================
+// 5. SAFETY & MODERATION LAYER
+// =============================================================================
+
+/// Crisis escalation flag generated by assessment risk score or post keyword trigger.
+model CrisisFlag {
+  id                  String           @id @default(uuid()) @db.Uuid
+  userId              String           @db.Uuid
+  user                User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source              CrisisSource
+  sourceId            String?
+  assessmentAttemptId String?          @db.Uuid
+  assessmentAttempt   AssessmentAttempt? @relation(fields: [assessmentAttemptId], references: [id], onDelete: SetNull)
+  postId              String?          @db.Uuid
+  post                Post?            @relation(fields: [postId], references: [id], onDelete: SetNull)
+  priority            CrisisPriority   @default(HIGH)
+  status              CrisisFlagStatus @default(OPEN)
+  userAcknowledgedAt  DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([userId, status])
+  @@index([status, priority])
+  @@map("crisis_flags")
+}
+
+/// Ethiopian crisis hotlines and specialized facilities (e.g. Amanuel Hospital).
+model CrisisResource {
+  id             String    @id @default(uuid()) @db.Uuid
+  nameEn         String
+  nameAm         String
+  descriptionEn  String
+  descriptionAm  String
+  phone          String
+  isActive       Boolean   @default(true)
+  lastVerifiedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@map("crisis_resources")
+}
+
+/// Audit log of actions taken by human moderators.
+model ModerationAction {
+  id           String               @id @default(uuid()) @db.Uuid
+  moderatorId  String?              @db.Uuid
+  moderator    User?                @relation("Moderator", fields: [moderatorId], references: [id], onDelete: SetNull)
+  targetUserId String               @db.Uuid
+  targetUser   User                 @relation("TargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+  type         ModerationActionType
+  reason       String
+  createdAt    DateTime             @default(now())
+
+  @@index([targetUserId])
+  @@index([moderatorId])
+  @@map("moderation_actions")
+}
+
+/// Automated safety restrictions triggered by threshold violations (FR-7.5, FR-7.7).
+model AutoRestriction {
+  id                    String                @id @default(uuid()) @db.Uuid
+  userId                String                @db.Uuid
+  user                  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  triggeredByReportCount Int
+  windowStart           DateTime
+  windowEnd             DateTime
+  status                AutoRestrictionStatus @default(ACTIVE)
+  reversedBy            String?
+  reversedAt            DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId, status])
+  @@map("auto_restrictions")
 }
