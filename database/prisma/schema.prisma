@@ -1,0 +1,154 @@
+// MindRise Database Schema
+// PostgreSQL via Prisma ORM
+// Privacy by Design: Strict segregation between VerifiedIdentity and public Profile
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  YOUTH
+  MODERATOR
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+  DELETION_PENDING
+}
+
+enum AssessmentType {
+  STRESS_ANXIETY
+  MOTIVATION_BURNOUT
+  EMOTIONAL_EXHAUSTION
+  GENERAL_WELLBEING
+}
+
+enum SeverityLevel {
+  MINIMAL
+  MILD
+  MODERATE
+  SEVERE
+}
+
+// Core User Account Record
+model User {
+  id               String          @id @default(uuid())
+  role             UserRole        @default(YOUTH)
+  status           AccountStatus   @default(ACTIVE)
+  verified         Boolean         @default(false)
+  restrictedUntil  DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  // 1-to-1 Strictly Private Verified Identity
+  verifiedIdentity VerifiedIdentity?
+
+  // 1-to-1 Public Anonymous Profile
+  profile          Profile?
+
+  // Relational Modules
+  assessments      SelfAssessment[]
+  routines         DailyRoutine[]
+
+  @@map("users")
+}
+
+// -----------------------------------------------------------------------------
+// PRIVACY CRITICAL: VerifiedIdentity
+// Stores PII used purely for account verification, anti-sybil, and safety escalations.
+// NEVER joined or queried in public community or profile routes.
+// -----------------------------------------------------------------------------
+model VerifiedIdentity {
+  id                 String    @id @default(uuid())
+  userId             String    @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  encryptedRealName  String    // AES-256-GCM ciphertext
+  encryptedPhone     String?   // AES-256-GCM ciphertext
+  encryptedEmail     String?   // AES-256-GCM ciphertext
+  phoneHash          String?   @unique // One-way hash for duplicate account prevention
+  emailHash          String?   @unique // One-way hash for duplicate account prevention
+  isPhoneVerified    Boolean   @default(false)
+  isEmailVerified    Boolean   @default(false)
+  verificationCode   String?
+  codeExpiresAt      DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("verified_identities")
+}
+
+// Public Anonymous Profile (Safe to query for community interactions)
+model Profile {
+  id            String          @id @default(uuid())
+  userId        String          @unique
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  handle        String          @unique // e.g. "AbyssiniaSeeker", "SelamVibes"
+  avatarUrl     String?         // Stored on Supabase Storage
+  bio           String?
+  preferredLang String          @default("am") // "am" or "en"
+  points        Int             @default(0)
+  currentStreak Int             @default(0)
+  longestStreak Int             @default(0)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  communityPosts CommunityPost[]
+
+  @@map("profiles")
+}
+
+// Self-Assessment Module (Encrypted Responses)
+model SelfAssessment {
+  id                 String          @id @default(uuid())
+  userId             String
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type               AssessmentType
+  encryptedResponses String          // AES-256-GCM encrypted payload
+  score              Int
+  severity           SeverityLevel
+  crisisFlagged      Boolean         @default(false)
+  createdAt          DateTime        @default(now())
+
+  @@index([userId])
+  @@map("self_assessments")
+}
+
+// Daily Routines & Habit Tracking
+model DailyRoutine {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title            String
+  description      String?
+  targetDaysPerWeek Int      @default(7)
+  completedToday   Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("daily_routines")
+}
+
+// Anonymous Peer Support Community
+model CommunityPost {
+  id          String    @id @default(uuid())
+  profileId   String
+  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  title       String
+  content     String
+  category    String    // e.g., "University Stress", "Career & Job Hunt", "Hope & Motivation"
+  isFlagged   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([profileId])
+  @@map("community_posts")
+}

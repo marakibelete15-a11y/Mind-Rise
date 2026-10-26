@@ -1,0 +1,26 @@
+{
+  "app": {
+    "title": "MindRise",
+    "tagline": "Mental health, routines, and anonymous peer support for Ethiopian youth."
+  },
+  "nav": {
+    "home": "Home",
+    "community": "Community",
+    "assessment": "Assessment",
+    "routines": "Daily Routines",
+    "crisis": "Get Help"
+  },
+  "home": {
+    "welcome": "Welcome to MindRise",
+    "subtitle": "A safe, confidential space designed for Ethiopian youth.",
+    "privacy_badge": "Two-Layer Privacy Guaranteed",
+    "privacy_explainer": "Your real identity remains strictly private. Only your anonymous handle is shared with peers.",
+    "cta_start": "Begin Self-Assessment",
+    "cta_community": "Explore Peer Community",
+    "hotline_banner": "Need immediate support? Call national helpline 8335 or 952 (Free & Confidential)."
+  },
+  "language": {
+    "en": "English",
+    "am": "አማርኛ"
+  }
+}
