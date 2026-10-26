@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { PrismaClient, AssessmentDomain, UserRole, AccountStatus, Language } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -489,21 +490,32 @@ async function main() {
       },
     });
 
+    // Normalized phone format: +251XXXXXXXXX (SRS FR-1.1, FR-1.5)
+    const devPhoneNormalized = '+251911000000';
+    const devEmailNormalized = 'dev-moderator@mindrise.local';
+    const pepper = process.env.HASH_PEPPER || 'dev_pepper_placeholder_min_32_characters_for_hmac';
+    const phoneHash = crypto.createHmac('sha256', pepper).update(devPhoneNormalized).digest('hex');
+    const emailHash = crypto.createHmac('sha256', pepper).update(devEmailNormalized).digest('hex');
+
     await prisma.verifiedIdentity.upsert({
       where: { userId: user.id },
       update: {
         firstName: 'Dev',
         lastName: 'Moderator',
-        email: 'dev-moderator@mindrise.local',
-        phone: '+251911000000',
+        phoneEncrypted: 'enc_v1:' + Buffer.from(devPhoneNormalized).toString('base64'),
+        emailEncrypted: 'enc_v1:' + Buffer.from(devEmailNormalized).toString('base64'),
+        phoneHash,
+        emailHash,
         verifiedAt: new Date(),
       },
       create: {
         userId: user.id,
         firstName: 'Dev',
         lastName: 'Moderator',
-        email: 'dev-moderator@mindrise.local',
-        phone: '+251911000000',
+        phoneEncrypted: 'enc_v1:' + Buffer.from(devPhoneNormalized).toString('base64'),
+        emailEncrypted: 'enc_v1:' + Buffer.from(devEmailNormalized).toString('base64'),
+        phoneHash,
+        emailHash,
         verifiedAt: new Date(),
       },
     });

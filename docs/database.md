@@ -21,15 +21,16 @@ MindRise operates on a foundational trust principle: **Confidentiality is a clin
 |         VerifiedIdentity         |          |             Profile              |
 |----------------------------------|          |----------------------------------|
 | - firstName, lastName            |          | - anonymousHandle (case-insens.) |
-| - phone, email (encrypted/hash)  |          | - avatarUrl (Supabase Storage)   |
-| - verifiedAt                     |          | - bio                            |
-|----------------------------------|          +----------------------------------+
-| RESTRICTED: Anti-Sybil / Audit   |                           |
-| NEVER visible to peers/mods!     |                           | Public Community
-| On Delete: CASCADE (Purged)      |                           v
-+----------------------------------+          +----------------------------------+
-                 |                            |        Posts, Comments, etc.     |
-                 v                            +----------------------------------+
+| - phoneEncrypted, emailEncrypted |          | - avatarUrl (Supabase Storage)   |
+| - phoneHash, emailHash (HMAC)    |          | - bio                            |
+| - verifiedAt                     |          +----------------------------------+
+|----------------------------------|                           |
+| RESTRICTED: Anti-Sybil / Audit   |                           | Public Community
+| NEVER visible to peers/mods!     |                           v
+| On Delete: CASCADE (Purged)      |          +----------------------------------+
++----------------------------------+          |        Posts, Comments, etc.     |
+                 |                            +----------------------------------+
+                 v
 +----------------------------------+
 |        IdentityAccessLog         |
 |  (Audit trail of all PII access) |
@@ -62,12 +63,12 @@ erDiagram
     Post ||--o{ Reaction : "receives"
     User ||--o{ Reaction : "gives"
     User ||--o{ Report : "reports"
-    User ||--o{ CrisisFlag : "triggers"
+    User ||--o{ CrisisFlag : "triggers (SetNull on delete)"
     AssessmentAttempt ||--o| CrisisFlag : "flags"
     Post ||--o| CrisisFlag : "flags"
-    User ||--o{ ModerationAction : "targeted by"
+    User ||--o{ ModerationAction : "targeted by (SetNull on delete)"
     User ||--o{ ModerationAction : "moderates"
-    User ||--o{ AutoRestriction : "restricted by"
+    User ||--o{ AutoRestriction : "restricted by (SetNull on delete)"
 
     User {
         uuid id PK
@@ -84,8 +85,10 @@ erDiagram
         uuid userId FK,UK
         string firstName
         string lastName
-        string phone
-        string email
+        string phoneEncrypted
+        string emailEncrypted
+        string phoneHash
+        string emailHash
         datetime verifiedAt
         datetime createdAt
         datetime updatedAt
@@ -261,6 +264,7 @@ erDiagram
         uuid id PK
         uuid moderatorId FK
         uuid targetUserId FK
+        string targetHandleSnapshot
         enum type
         string reason
     }
@@ -284,7 +288,7 @@ erDiagram
 ### Layer 1: Identity & Access Management
 
 1. **`users`**: Root account table holding system role (`USER`, `MODERATOR`, `ADMIN`), status (`ACTIVE`, `RESTRICTED`, `SUSPENDED`, `BANNED`), preferred language (`EN`, `AM`), and soft-deletion timestamp (`deletedAt`).
-2. **`verified_identities`**: Strictly private identity record. Holds real first and last names, phone number, email address, and verification timestamp. Protected with a SQL CHECK constraint requiring either phone or email, and partial unique indexes enforcing FR-1.5 (one active account per phone/email).
+2. **`verified_identities`**: Strictly private identity record. Holds real names, application-layer encrypted contact details (`phoneEncrypted`, `emailEncrypted`), and HMAC blind indexes (`phoneHash`, `emailHash`). Enforced with a SQL CHECK constraint requiring either phone or email, and partial unique indexes enforcing FR-1.5. Phone numbers are strictly normalized to Ethiopian E.164 (`+251XXXXXXXXX`) prior to HMAC hashing.
 3. **`verification_codes`**: Manages ephemeral OTP codes for registration and passwordless login. Only stores cryptographic SHA-256 hashes (`codeHash`), never plaintext codes. Includes attempt counts and expiration checks.
 4. **`profiles`**: Public-facing identity record. Holds the chosen `anonymousHandle` (case-insensitive unique) and Supabase avatar URL.
 5. **`identity_access_logs`**: Regulatory audit log (SRS 5.4). Records every single read or write access to `verified_identities`, documenting the accessor, target identity, reason, IP address, user agent, and timestamp.
@@ -310,75 +314,79 @@ erDiagram
 16. **`posts`**: Community discussion threads linked to topics. Author foreign key uses `onDelete: SetNull` for account deletion preservation.
 17. **`comments`**: Threaded replies. Author foreign key uses `onDelete: SetNull`.
 18. **`reactions`**: Peer affirmations (`SUPPORT`), restricted to a single reaction per user per post.
-19. **`reports`**: Safety reporting queue for posts, comments, or accounts. Reporter ID is never exposed to the reported party.
+19. **`reports`**: Safety reporting queue for posts, comments, or accounts with `reason` and `status`. Reporter ID is never exposed to the reported party.
 
 ### Layer 5: Safety & Moderation
 
-20. **`crisis_flags`**: Real-time safety escalations generated by risk questions in assessments or acute distress keywords in community posts.
+20. **`crisis_flags`**: Real-time safety escalations. Relation to `users` uses `onDelete: SetNull` so safety incidents remain logged even after account deletion.
 21. **`crisis_resources`**: Verified Ethiopian mental health hotlines (e.g., Amanuel Hospital 8335, National Emergency 952). `lastVerifiedAt` tracks validation recency.
-22. **`moderation_actions`**: Audit log of all human moderator actions (`WARN`, `SUSPEND`, `BAN`, `REMOVE_CONTENT`, `REVERSE_RESTRICTION`).
-23. **`auto_restrictions`**: Automated safety throttling triggered when an account receives excessive reports within a sliding window (FR-7.5, FR-7.7).
+22. **`moderation_actions`**: Audit log of human moderator actions. Target user relation uses `onDelete: SetNull` and stores `targetHandleSnapshot` so moderation accountability survives account deletion (SRS FR-7.3).
+23. **`auto_restrictions`**: Automated safety throttling triggered when an account receives excessive reports. Target user relation uses `onDelete: SetNull` and includes `reversedBy` and `reversedAt` (FR-7.5, FR-7.7).
 
 ---
 
-## 4. Deletion Rules & Account Lifecycle (SRS 5.4)
+## 4. Deletion Rules & Account Lifecycle (SRS 5.4, FR-7.3)
 
-When a user requests full account deletion per SRS Section 5.4, the platform must balance **complete personal data erasure** against **community conversation integrity**.
+When a user requests full account deletion per SRS Section 5.4, the platform must balance **complete personal data erasure** against **community conversation integrity and safety accountability**.
 
-| Table                           | `onDelete` Behavior            | Rationale                                                                                                                     |
-| :------------------------------ | :----------------------------- | :---------------------------------------------------------------------------------------------------------------------------- |
-| `verified_identities`           | **`CASCADE`**                  | **CRITICAL**: Real names, phone numbers, and emails are permanently destroyed.                                                |
-| `profiles`                      | **`CASCADE`**                  | Public handle and avatar associations are completely deleted.                                                                 |
-| `verification_codes`            | **`CASCADE`**                  | All active or consumed OTP hashes are removed.                                                                                |
-| `assessment_attempts`           | **`CASCADE`**                  | Sensitive psychological questionnaires are permanently removed.                                                               |
-| `routines` & `completions`      | **`CASCADE`**                  | Habit records and streaks are deleted.                                                                                        |
-| `user_progress` & `user_badges` | **`CASCADE`**                  | Gamification data is deleted.                                                                                                 |
-| `posts`                         | **`SET NULL`**                 | `authorId` becomes `NULL`. The post content remains visible as `[Deleted User]` to preserve peer discussion context.          |
-| `comments`                      | **`SET NULL`**                 | `authorId` becomes `NULL`. Preserves thread flow without leaving personal traces.                                             |
-| `identity_access_logs`          | **`SET NULL`**                 | `accessedById` becomes `NULL`. Preserves regulatory audit logs of past data access without violating foreign key constraints. |
-| `moderation_actions`            | **`SET NULL`** / **`CASCADE`** | Moderator ID sets to NULL; target user actions cascade on purge.                                                              |
+| Table                           | `onDelete` Behavior | Rationale                                                                                                                     |
+| :------------------------------ | :------------------ | :---------------------------------------------------------------------------------------------------------------------------- |
+| `verified_identities`           | **`CASCADE`**       | **CRITICAL**: Real names, encrypted phone, encrypted email, and hashes are permanently destroyed.                             |
+| `profiles`                      | **`CASCADE`**       | Public handle and avatar associations are completely deleted.                                                                 |
+| `verification_codes`            | **`CASCADE`**       | All active or consumed OTP hashes are removed.                                                                                |
+| `assessment_attempts`           | **`CASCADE`**       | Sensitive psychological questionnaires are permanently removed.                                                               |
+| `routines` & `completions`      | **`CASCADE`**       | Habit records and streaks are deleted.                                                                                        |
+| `user_progress` & `user_badges` | **`CASCADE`**       | Gamification data is deleted.                                                                                                 |
+| `posts`                         | **`SET NULL`**      | `authorId` becomes `NULL`. The post content remains visible as `[Deleted User]` to preserve peer discussion context.          |
+| `comments`                      | **`SET NULL`**      | `authorId` becomes `NULL`. Preserves thread flow without leaving personal traces.                                             |
+| `identity_access_logs`          | **`SET NULL`**      | `accessedById` becomes `NULL`. Preserves regulatory audit logs of past data access without violating foreign key constraints. |
+| `moderation_actions`            | **`SET NULL`**      | `targetUserId` becomes `NULL`. Preserves sanction history and reason; `targetHandleSnapshot` retains context (FR-7.3).        |
+| `auto_restrictions`             | **`SET NULL`**      | `userId` becomes `NULL`. Preserves restriction metric history (FR-7.5, FR-7.7).                                               |
+| `crisis_flags`                  | **`SET NULL`**      | `userId` becomes `NULL`. Preserves safety response metrics and incident logs.                                                 |
 
 ---
 
 ## 5. Privacy & Access Control Matrix
 
-| Table                  | Data Sensitivity Level    | Public API Read | Peer Community Read  |   Moderator Read    |     Admin Read      |         Encryption at Rest          |
-| :--------------------- | :------------------------ | :-------------: | :------------------: | :-----------------: | :-----------------: | :---------------------------------: |
-| `users`                | **Internal System**       |    Own only     |        ❌ No         |  Status/Role only   |       ✅ Full       |             Standard DB             |
-| `verified_identities`  | **Strictly Private PII**  |      ❌ No      |        ❌ No         | ❌ No (Zero access) |   ⚠️ Audited only   | App AES-256-GCM / SQL partial index |
-| `verification_codes`   | **Strictly Private Auth** |      ❌ No      |        ❌ No         |        ❌ No        |        ❌ No        |          Hashed (SHA-256)           |
-| `profiles`             | **Public Pseudonymous**   |     ✅ Yes      |        ✅ Yes        |       ✅ Yes        |       ✅ Yes        |             Standard DB             |
-| `identity_access_logs` | **Security Audit**        |      ❌ No      |        ❌ No         |        ❌ No        | ✅ Full (Read-only) |             Standard DB             |
-| `assessment_attempts`  | **Sensitive Clinical**    |    Own only     |        ❌ No         | ⚠️ Crisis Flag only |   ⚠️ Safety Lead    |           App AES-256-GCM           |
-| `community_posts`      | **Public Community**      |     ✅ Yes      | ✅ Yes (Handle only) |       ✅ Yes        |       ✅ Yes        |             Standard DB             |
-| `community_comments`   | **Public Community**      |     ✅ Yes      | ✅ Yes (Handle only) |       ✅ Yes        |       ✅ Yes        |             Standard DB             |
-| `reports`              | **Confidential Safety**   |      ❌ No      |        ❌ No         |    ✅ Queue only    |       ✅ Full       |   Standard DB (Reporter shielded)   |
-| `crisis_flags`         | **Confidential Safety**   |   Own status    |        ❌ No         |    ✅ Queue only    |       ✅ Full       |             Standard DB             |
-| `crisis_resources`     | **Public Safety**         |     ✅ Yes      |        ✅ Yes        |       ✅ Yes        |       ✅ Yes        |             Standard DB             |
+| Table                  | Data Sensitivity Level    | Public API Read | Peer Community Read  |   Moderator Read    |     Admin Read      |         Encryption at Rest         |
+| :--------------------- | :------------------------ | :-------------: | :------------------: | :-----------------: | :-----------------: | :--------------------------------: |
+| `users`                | **Internal System**       |    Own only     |        ❌ No         |  Status/Role only   |       ✅ Full       |            Standard DB             |
+| `verified_identities`  | **Strictly Private PII**  |      ❌ No      |        ❌ No         | ❌ No (Zero access) |   ⚠️ Audited only   | App AES-256-GCM / HMAC blind index |
+| `verification_codes`   | **Strictly Private Auth** |      ❌ No      |        ❌ No         |        ❌ No        |        ❌ No        |          Hashed (SHA-256)          |
+| `profiles`             | **Public Pseudonymous**   |     ✅ Yes      |        ✅ Yes        |       ✅ Yes        |       ✅ Yes        |            Standard DB             |
+| `identity_access_logs` | **Security Audit**        |      ❌ No      |        ❌ No         |        ❌ No        | ✅ Full (Read-only) |            Standard DB             |
+| `assessment_attempts`  | **Sensitive Clinical**    |    Own only     |        ❌ No         | ⚠️ Crisis Flag only |   ⚠️ Safety Lead    |          App AES-256-GCM           |
+| `community_posts`      | **Public Community**      |     ✅ Yes      | ✅ Yes (Handle only) |       ✅ Yes        |       ✅ Yes        |            Standard DB             |
+| `community_comments`   | **Public Community**      |     ✅ Yes      | ✅ Yes (Handle only) |       ✅ Yes        |       ✅ Yes        |            Standard DB             |
+| `reports`              | **Confidential Safety**   |      ❌ No      |        ❌ No         |    ✅ Queue only    |       ✅ Full       |  Standard DB (Reporter shielded)   |
+| `crisis_flags`         | **Confidential Safety**   |   Own status    |        ❌ No         |    ✅ Queue only    |       ✅ Full       |            Standard DB             |
+| `crisis_resources`     | **Public Safety**         |     ✅ Yes      |        ✅ Yes        |       ✅ Yes        |       ✅ Yes        |            Standard DB             |
+| `moderation_actions`   | **Moderation Audit**      |      ❌ No      |        ❌ No         |    ✅ Team only     |       ✅ Full       |            Standard DB             |
+| `auto_restrictions`    | **Safety Throttling**     |   Own status    |        ❌ No         |    ✅ Team only     |       ✅ Full       |            Standard DB             |
 
 ---
 
 ## 6. PostgreSQL Constraints & Advanced Indexes
 
-The following constraints are enforced directly in PostgreSQL via migration `20261026000000_init_database_layer`:
+The following constraints are enforced directly in PostgreSQL across migrations:
 
-1. **Mandatory Contact Channel Constraint**:
+1. **Mandatory Contact Channel Constraint (`migration 2`)**:
    ```sql
    ALTER TABLE "verified_identities"
    ADD CONSTRAINT "check_phone_or_email_required"
-   CHECK ("phone" IS NOT NULL OR "email" IS NOT NULL);
+   CHECK ("phoneEncrypted" IS NOT NULL OR "emailEncrypted" IS NOT NULL);
    ```
-2. **Anti-Sybil Single-Account Constraint (FR-1.5)**:
+2. **Anti-Sybil Single-Account Constraint (FR-1.5, HMAC Blind Index)**:
    ```sql
-   CREATE UNIQUE INDEX "idx_unique_verified_phone"
-   ON "verified_identities" ("phone")
-   WHERE "phone" IS NOT NULL;
+   CREATE UNIQUE INDEX "idx_unique_verified_phone_hash"
+   ON "verified_identities" ("phoneHash")
+   WHERE "phoneHash" IS NOT NULL;
 
-   CREATE UNIQUE INDEX "idx_unique_verified_email"
-   ON "verified_identities" ("email")
-   WHERE "email" IS NOT NULL;
+   CREATE UNIQUE INDEX "idx_unique_verified_email_hash"
+   ON "verified_identities" ("emailHash")
+   WHERE "emailHash" IS NOT NULL;
    ```
-3. **Case-Insensitive Handle Uniqueness**:
+3. **Case-Insensitive Handle Uniqueness (`migration 1`)**:
    ```sql
    CREATE UNIQUE INDEX "idx_unique_profile_handle_case_insensitive"
    ON "profiles" (LOWER("anonymousHandle"));
