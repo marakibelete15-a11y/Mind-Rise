@@ -188,7 +188,58 @@ mindrise/
 
 - **Node.js**: v20.x or higher (Node v24 recommended)
 - **npm**: v10.x or higher
-- **PostgreSQL**: (optional for running `/health`, required for database operations)
+- **PostgreSQL**: v14+ (Local native installation, no Docker required)
+
+### Local PostgreSQL Setup (Fedora/Ubuntu/macOS)
+
+MindRise uses a direct local PostgreSQL installation for development. No Docker containers are needed.
+
+#### 1. Install PostgreSQL & Create Database
+
+**Fedora / RHEL:**
+
+```bash
+sudo dnf install -y postgresql-server postgresql-contrib
+sudo postgresql-setup --initdb
+sudo systemctl enable --now postgresql
+sudo -u postgres createuser -s $(whoami)
+createdb mindrise_dev
+```
+
+**Ubuntu / Debian:**
+
+```bash
+sudo apt update && sudo apt install -y postgresql postgresql-contrib
+sudo systemctl enable --now postgresql
+sudo -u postgres createuser -s $(whoami)
+createdb mindrise_dev
+```
+
+**macOS (Homebrew):**
+
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+createuser -s $(whoami)
+createdb mindrise_dev
+```
+
+#### 2. Set Up Environment & DATABASE_URL
+
+Set your local connection string in `.env` pointing to `127.0.0.1`:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/mindrise_dev?schema=public
+# Or with your local OS user account:
+# DATABASE_URL=postgresql://maraki:password@127.0.0.1:5432/mindrise_dev?schema=public
+```
+
+#### 3. Run Migrations & Seed Data
+
+```bash
+npm run db:deploy
+npm run db:seed
+```
 
 ### Step-by-Step Installation
 
