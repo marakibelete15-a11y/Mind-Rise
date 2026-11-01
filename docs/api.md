@@ -62,7 +62,7 @@ All endpoints below are planned and are mounted under `/api`.
 - `POST /auth/verify-otp` — planned: verify phone/email OTP.
 - `POST /auth/login` — planned: authenticate and issue JWT.
 
-### Users (FR-1.3, 5.4)
+### Users (FR-1.3, SRS 5.4)
 - `GET /users/me` — planned: fetch own pseudonymous profile.
 - `DELETE /users/me` — planned: request account deletion.
 
@@ -82,13 +82,12 @@ All endpoints below are planned and are mounted under `/api`.
 - `POST /community/posts` — planned: create an anonymous post.
 - `POST /community/posts/:id/comments` — planned: comment on a post.
 
-### Reports (SRS 2.5, FR-7.1)
+### Reports (SRS 2.5)
 - `POST /reports` — planned: report content or an account.
 
 ### Crisis (SRS 2.5)
 - `GET /crisis/resources` — planned: list verified local crisis hotlines.
 
-### Moderation (SRS 2.5, FR-7.3–7.7)
+### Moderation (SRS 2.5)
 - `GET /moderation/reports` — planned: view moderation queue.
 - `POST /moderation/actions` — planned: record a moderation action.
-
