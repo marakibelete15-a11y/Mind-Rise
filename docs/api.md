@@ -14,33 +14,21 @@
 
 ### Success Response
 
-```json
-{
-  "data": { ... },
-  "meta": {
-    "timestamp": "2026-10-26T12:00:00.000Z"
-  }
-}
-```
+All successful API responses use exactly `{ "data": ... }`.
 
 ### Error Response
 
-All server errors strictly adhere to the unified error contract:
+Errors use `{ "error": { "code", "message", "details? } }`. Validation errors use HTTP 400 and `VALIDATION_ERROR`; restricted accounts use HTTP 403 and `ACCOUNT_RESTRICTED`.
 
-```json
-{
-  "error": {
-    "code": "VALIDATION_ERROR | INVALID_TOKEN | FORBIDDEN | NOT_FOUND | INTERNAL_ERROR",
-    "message": "Human-readable description of error.",
-    "details": [
-      {
-        "field": "fieldName",
-        "message": "Specific field error"
-      }
-    ]
-  }
-}
-```
+### Shared request conventions
+
+- Protected endpoints use `Authorization: Bearer <JWT>`; JWT claims never contain personal identity fields.
+- In `development` only, `x-dev-user-id: <user UUID>` selects a database user. This header is disabled in tests and production.
+- Roles are `USER`, `MODERATOR`, and `ADMIN`; statuses are `ACTIVE`, `RESTRICTED`, `SUSPENDED`, and `BANNED`.
+- `?cursor=<id>&limit=<n>` paginates collections; limit defaults to 20 and is capped at 50. Collection responses include `{ "data": { "items": [], "nextCursor": null } }`.
+- `?lang=en|am` selects response language, then the user's preferred language is used, then Amharic (`AM`).
+
+---
 
 ---
 
@@ -65,18 +53,42 @@ Returns system status, environment, uptime, and current ISO timestamp.
 
 ---
 
-## API Routes Roadmap (MVP)
+## Planned module endpoints (SRS v1.3)
 
-| Method | Endpoint                    | Description                           | Protected    |
-| :----- | :-------------------------- | :------------------------------------ | :----------- |
-| `GET`  | `/health`                   | Server health and operational status  | No           |
-| `POST` | `/api/auth/register`        | Register new user + verified identity | No           |
-| `POST` | `/api/auth/verify-otp`      | Verify SMS/email OTP code             | No           |
-| `POST` | `/api/auth/login`           | Authenticate user & issue JWT         | No           |
-| `GET`  | `/api/users/me`             | Fetch authenticated user's profile    | Yes (Bearer) |
-| `POST` | `/api/assessments`          | Submit self-assessment responses      | Yes (Bearer) |
-| `GET`  | `/api/routines`             | List user's active daily habits       | Yes (Bearer) |
-| `POST` | `/api/routines/:id/checkin` | Check in daily routine completion     | Yes (Bearer) |
-| `GET`  | `/api/community/posts`      | Paginated anonymous community posts   | Yes (Bearer) |
-| `POST` | `/api/community/posts`      | Create anonymous community post       | Yes (Bearer) |
-| `GET`  | `/api/crisis/resources`     | List local Ethiopian crisis hotlines  | No           |
+All endpoints below are planned and are mounted under `/api`.
+
+### Auth (FR-1.1–1.5)
+- `POST /auth/register` — planned: create account and private verified identity.
+- `POST /auth/verify-otp` — planned: verify phone/email OTP.
+- `POST /auth/login` — planned: authenticate and issue JWT.
+
+### Users (FR-1.3, 5.4)
+- `GET /users/me` — planned: fetch own pseudonymous profile.
+- `DELETE /users/me` — planned: request account deletion.
+
+### Assessments (SRS 2.2)
+- `GET /assessments/templates` — planned: list bilingual questionnaires.
+- `POST /assessments` — planned: submit encrypted assessment answers and receive non-diagnostic feedback.
+- `GET /assessments/:id` — planned: view own assessment result.
+
+### Routines (SRS 2.3)
+- `GET /routines` — planned: list own routines.
+- `POST /routines` — planned: create a routine.
+- `POST /routines/:id/checkin` — planned: record daily completion.
+
+### Community (SRS 2.4)
+- `GET /community/topics` — planned: list discussion spaces.
+- `GET /community/posts` — planned: list paginated anonymous posts.
+- `POST /community/posts` — planned: create an anonymous post.
+- `POST /community/posts/:id/comments` — planned: comment on a post.
+
+### Reports (SRS 2.5, FR-7.1)
+- `POST /reports` — planned: report content or an account.
+
+### Crisis (SRS 2.5)
+- `GET /crisis/resources` — planned: list verified local crisis hotlines.
+
+### Moderation (SRS 2.5, FR-7.3–7.7)
+- `GET /moderation/reports` — planned: view moderation queue.
+- `POST /moderation/actions` — planned: record a moderation action.
+
