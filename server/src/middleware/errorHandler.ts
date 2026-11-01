@@ -1,22 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 
-export interface AppError extends Error {
-  statusCode?: number;
-  code?: string;
-  details?: unknown;
+export class AppError extends Error {
+  constructor(public statusCode: number, public code: string, message: string, public details?: unknown) { super(message); this.name = 'AppError'; }
 }
-
-export const errorHandler = (err: AppError, _req: Request, res: Response, _next: NextFunction) => {
-  const statusCode = err.statusCode || 500;
-  const code = err.code || 'INTERNAL_ERROR';
-  const message = err.message || 'An unexpected error occurred.';
-
-  // In production, never leak internal stack traces
-  res.status(statusCode).json({
-    error: {
-      code,
-      message,
-      ...(err.details ? { details: err.details } : {}),
-    },
-  });
+export const errorHandler = (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (err instanceof ZodError) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Validation failed.', details: err.issues.map(i => ({ field: i.path.join('.'), message: i.message })) } });
+  if (err instanceof AppError) return res.status(err.statusCode).json({ error: { code: err.code, message: err.message, ...(err.details === undefined ? {} : { details: err.details }) } });
+  return res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: process.env.NODE_ENV === 'production' ? 'An unexpected error occurred.' : err instanceof Error ? err.message : 'An unexpected error occurred.' } });
 };

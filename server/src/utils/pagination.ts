@@ -1,0 +1,3 @@
+import { AppError } from '../middleware/errorHandler.js';
+export function parsePagination(query: Record<string, unknown>) { const raw=query.limit; const limit=raw===undefined?20:Number(raw); if(!Number.isInteger(limit)||limit<1) throw new AppError(400,'VALIDATION_ERROR','limit must be a positive integer.'); return { cursor: typeof query.cursor==='string'&&query.cursor?query.cursor:undefined, limit:Math.min(limit,50) }; }
+export function paginate<T extends {id:string}>(items:T[], limit:number) { const hasMore=items.length>limit; const page=hasMore?items.slice(0,limit):items; return { items:page, nextCursor:hasMore?page[page.length-1]?.id??null:null }; }
