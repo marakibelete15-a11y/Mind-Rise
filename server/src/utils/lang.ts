@@ -1,0 +1,1 @@
+export function resolveLanguage(query: Record<string, unknown>, preferredLanguage?: string): 'EN'|'AM' { const q=query.lang; if(q==='en') return 'EN'; if(q==='am') return 'AM'; return preferredLanguage?.toUpperCase()==='EN'?'EN':'AM'; }

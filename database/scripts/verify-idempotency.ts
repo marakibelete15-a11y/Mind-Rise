@@ -24,7 +24,7 @@ async function verify() {
 
   console.log('🔄 [Idempotency Test] Executing seed script second time...');
   execSync('npx tsx prisma/seed/seed.ts', {
-    cwd: '/home/maraki/MindRiseNew/database',
+    cwd: process.cwd(),
     stdio: 'inherit',
     env: process.env,
   });

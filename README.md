@@ -297,3 +297,8 @@ All scripts can be executed from the root directory using npm workspaces:
 ## 8. License
 
 This project is licensed under the [MIT License](LICENSE).
+
+
+## Server tests
+
+Server tests use Node’s built-in `node:test` runner via `tsx`; Jest and Supertest are not used.
