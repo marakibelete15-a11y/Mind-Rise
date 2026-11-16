@@ -5,6 +5,7 @@ import {
   getAddisYesterdayString,
   parseDateStringToDate,
   formatDateToDateString,
+  getAddisDayRange,
 } from '../src/utils/dates.js';
 
 test('getAddisDateString resolves 20:59 UTC and 21:00 UTC to different Addis days (UTC+3)', () => {
@@ -48,4 +49,17 @@ test('parseDateStringToDate and formatDateToDateString round-trip cleanly', () =
 
   assert.equal(parsed.toISOString(), '2026-11-16T00:00:00.000Z');
   assert.equal(formatDateToDateString(parsed), dateStr);
+});
+
+test('getAddisDayRange returns exact UTC start and end bounds for the Addis day', () => {
+  const now = new Date('2026-11-16T10:00:00.000Z');
+  const { startUtc, endUtc, addisDateStr } = getAddisDayRange(now);
+
+  assert.equal(addisDateStr, '2026-11-16');
+  // 00:00:00 in Addis on Nov 16 is 21:00:00 UTC on Nov 15
+  assert.equal(startUtc.toISOString(), '2026-11-15T21:00:00.000Z');
+  // 23:59:59.999 in Addis on Nov 16 is 20:59:59.999 UTC on Nov 16
+  assert.equal(endUtc.toISOString(), '2026-11-16T20:59:59.999Z');
+  assert.equal(getAddisDateString(startUtc), '2026-11-16');
+  assert.equal(getAddisDateString(endUtc), '2026-11-16');
 });
