@@ -4,4 +4,6 @@ import authRouter from './auth.routes.js'; import usersRouter from './users.rout
 const router=Router();
 router.use('/health',healthRouter);
 const api=Router(); api.use('/auth',authRouter); api.use('/users',usersRouter); api.use('/assessments',assessmentsRouter); api.use('/routines',routinesRouter); api.use('/community',communityRouter); api.use('/reports',reportsRouter); api.use('/crisis',crisisRouter); api.use('/moderation',moderationRouter); router.use('/api',api);
+// Mount routines at root router level as well so both /routines and /api/routines work seamlessly
+router.use('/routines', routinesRouter);
 export default router;
