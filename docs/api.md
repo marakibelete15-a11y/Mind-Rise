@@ -66,10 +66,166 @@ All endpoints below are planned and are mounted under `/api`.
 - `GET /users/me` — planned: fetch own pseudonymous profile.
 - `DELETE /users/me` — planned: request account deletion.
 
-### Assessments (SRS 2.2)
-- `GET /assessments/templates` — planned: list bilingual questionnaires.
-- `POST /assessments` — planned: submit encrypted assessment answers and receive non-diagnostic feedback.
-- `GET /assessments/:id` — planned: view own assessment result.
+### Assessments (SRS 2.2, FR-2.1 to FR-2.5) — Phase B3 Implemented
+
+#### `GET /api/assessments`
+- **Description**: Returns the latest version of questionnaire templates across domains (`STRESS`, `ANXIETY`, `LOW_MOTIVATION`, `EMOTIONAL_EXHAUSTION`, `LOSS_OF_PURPOSE`), with question count and localized titles.
+- **Authentication**: `Authorization: Bearer <JWT>` (or `x-dev-user-id` in dev). Allows `ACTIVE` and `RESTRICTED` users.
+- **Query Parameters**:
+  - `lang` *(optional)*: `'en'` or `'am'`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": [
+    {
+      "id": "11111111-1111-4000-a000-000000000001",
+      "domain": "STRESS",
+      "version": 1,
+      "title": "Stress & Overwhelm Checkup",
+      "description": "Confidential self-assessment to gauge current stress loads and emotional exhaustion.",
+      "questionCount": 4
+    }
+  ]
+}
+```
+
+#### `GET /api/assessments/:id`
+- **Description**: Retrieves a single questionnaire template and its ordered questions with localized answer options.
+- **Security & Privacy**: Strictly omits `scoring`, `riskThreshold`, and `isRiskItem` from the response payload.
+- **Authentication**: `Authorization: Bearer <JWT>`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "id": "11111111-1111-4000-a000-000000000001",
+    "domain": "STRESS",
+    "version": 1,
+    "title": "Stress & Overwhelm Checkup",
+    "description": "Confidential self-assessment to gauge current stress loads and emotional exhaustion.",
+    "questions": [
+      {
+        "id": "22222222-2222-4000-a000-000000000001",
+        "order": 1,
+        "text": "Over the last 2 weeks, how often have you felt unable to control important things in your life?",
+        "options": [
+          { "value": "rarely", "label": "Rarely" },
+          { "value": "sometimes", "label": "Sometimes" },
+          { "value": "often", "label": "Often" },
+          { "value": "always", "label": "Always" }
+        ]
+      }
+    ]
+  }
+}
+```
+- **Error Codes**: `404 TEMPLATE_NOT_FOUND`.
+
+#### `POST /api/assessments/:id/attempts`
+- **Description**: Submits answers for an assessment questionnaire. Computes score server-side, encrypts answers at rest using AES-256-GCM, triggers crisis escalation if safety threshold is exceeded, and returns localized non-diagnostic reflective feedback and universal disclaimer.
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Abuse Protection**: Maximum 5 attempts per user per template per local Addis Ababa day. Exceeding limit returns HTTP 429.
+- **Request Body**:
+```json
+{
+  "answers": [
+    { "questionId": "22222222-2222-4000-a000-000000000001", "value": "sometimes" },
+    { "questionId": "22222222-2222-4000-a000-000000000002", "value": "always" },
+    { "questionId": "22222222-2222-4000-a000-000000000003", "value": "rarely" },
+    { "questionId": "22222222-2222-4000-a000-000000000004", "value": "never" }
+  ]
+}
+```
+- **Status Code**: `201 Created`
+- **Response**:
+```json
+{
+  "data": {
+    "attempt": {
+      "id": "33333333-3333-4000-a000-000000000001",
+      "domain": "STRESS",
+      "score": 1,
+      "summary": "Your responses suggest you are currently managing daily pressures well, with mild and manageable stress levels.",
+      "disclaimer": "This tool does not provide a medical diagnosis and is not a substitute for professional care.",
+      "createdAt": "2026-11-16T10:00:00.000Z"
+    },
+    "crisis": {
+      "show": false,
+      "resources": []
+    }
+  }
+}
+```
+- **Error Codes**: `400 INVALID_ASSESSMENT_ANSWERS`, `404 TEMPLATE_NOT_FOUND`, `429 ASSESSMENT_DAILY_LIMIT`.
+
+#### `GET /api/assessments/attempts`
+- **Description**: Lists caller's assessment attempt history, newest first, with cursor-based pagination and optional domain filter.
+- **Privacy**: Decrypted answers are omitted from the list view.
+- **Authentication**: `Authorization: Bearer <JWT>`.
+- **Query Parameters**:
+  - `cursor` *(optional)*: UUID of last seen attempt.
+  - `limit` *(optional)*: Integer between 1 and 50 (default: 20).
+  - `domain` *(optional)*: Filter by `AssessmentDomain`.
+  - `lang` *(optional)*: `'en'` or `'am'`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "33333333-3333-4000-a000-000000000001",
+        "domain": "STRESS",
+        "score": 1,
+        "summaryKey": "LOW",
+        "summary": "Your responses suggest you are currently managing daily pressures well, with mild and manageable stress levels.",
+        "createdAt": "2026-11-16T10:00:00.000Z"
+      }
+    ],
+    "nextCursor": null
+  }
+}
+```
+
+#### `GET /api/assessments/attempts/:id`
+- **Description**: Retrieves a single assessment attempt owned by the caller. Answers are decrypted and returned only to the owning user.
+- **Privacy & IDOR Defense**: Returns 404 if the attempt belongs to another user.
+- **Authentication**: `Authorization: Bearer <JWT>`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "id": "33333333-3333-4000-a000-000000000001",
+    "domain": "STRESS",
+    "score": 1,
+    "summaryKey": "LOW",
+    "summary": "Your responses suggest you are currently managing daily pressures well, with mild and manageable stress levels.",
+    "disclaimer": "This tool does not provide a medical diagnosis and is not a substitute for professional care.",
+    "answers": [
+      { "questionId": "22222222-2222-4000-a000-000000000001", "value": "sometimes" }
+    ],
+    "createdAt": "2026-11-16T10:00:00.000Z"
+  }
+}
+```
+- **Error Codes**: `404 ATTEMPT_NOT_FOUND`.
+
+#### `DELETE /api/assessments/attempts/:id`
+- **Description**: Hard delete of an assessment attempt initiated by the owner (SRS 6.1: User data sovereignty).
+- **Authentication**: `Authorization: Bearer <JWT>`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "success": true,
+    "message": "Assessment attempt deleted successfully."
+  }
+}
+```
+- **Error Codes**: `404 ATTEMPT_NOT_FOUND`.
 
 ### Routines (SRS 2.3) — Phase B1 Implemented
 
@@ -409,7 +565,30 @@ Localization follows a clean three-tier priority cascade:
 - **Design Decision — No Completion Undo**:
   Completion records (`RoutineCompletion`) cannot be undone or revoked in this phase. This preserves mathematical monotonicity for points, prevents negative point reconciliation anomalies, and keeps streak histories tamper-resistant.
 
+### 7. Self-Assessment Design & Privacy Guarantees (Phase B3)
 
+- **Application-Layer Encryption at Rest (AES-256-GCM)**:
+  - User answers to assessment questions (`answers`) are encrypted at the application layer with AES-256-GCM using `encryptJson` before being stored in the database.
+  - The ciphertext payload begins with the version prefix `enc_v1:` containing the 12-byte initialization vector (IV), 16-byte authentication tag, and ciphertext.
+  - Plaintext answers are never stored in PostgreSQL and are never decrypted in batch list queries (`GET /api/assessments/attempts`).
+  - Decryption happens exclusively in `GET /api/assessments/attempts/:id` and only when requested by the owning user.
+- **Strictly Non-Diagnostic and Reflective Principle**:
+  - The assessment module explicitly rejects medical or psychiatric diagnostic labeling.
+  - Diagnostic labels (such as "depression", "clinical", "disorder", or "dysthymia") are strictly prohibited in summary bands and API responses.
+  - Results categorize scores into reflective feedback bands (`LOW`, `MODERATE`, `HIGH`) that validate the user's emotional experience and suggest gentle self-care habits.
+  - Every assessment attempt response mandates the inclusion of the universal bilingual disclaimer:
+    > *"This tool does not provide a medical diagnosis and is not a substitute for professional care."*
+    > *(Amharic: "ይህ መሳሪያ የህክምና ምርመራ ወይም ማረጋገጫ አይሰጥም፣ እንዲሁም የባለሙያ የህክምና እና የስነ-ልቦና እንክብካቤን አይተካም።")*
+- **Crisis Escalation Hook & Error Isolation**:
+  - Triage risk is triggered if the calculated `score >= template.riskThreshold` OR if any critical safety question (`isRiskItem: true`) is answered above its safe baseline (`value > 0`).
+  - When risk is flagged, the service calls `crisisService.raiseFlag` asynchronously after the attempt record is committed.
+  - The flag notification is wrapped in error-handling isolation (`try/catch`). Even if external notification or webhook delivery fails, the assessment submission succeeds with HTTP 201, returning the attempt result and active crisis resources.
+  - Decrypted answers are never logged. The internal field `riskFlagged` and the word `"flagged"` are never exposed to the client in the API response.
+- **Placeholder Content Notice (SRS 5.2, 6.3)**:
+  - Questionnaires, scoring keys, and summary text are preliminary placeholders based on standard psychological screening conventions.
+  - Formal clinical review and psychiatric validation by licensed Ethiopian mental health professionals and native Amharic linguists is required prior to public release.
+- **Zero Gamification Policy**:
+  - Assessments deliberately do not award points, streaks, or badges. This prevents clinical evaluations from being gamified or completed compulsively for rewards.
 
 ### Community (SRS 2.4)
 - `GET /community/topics` — planned: list discussion spaces.
