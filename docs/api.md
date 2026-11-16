@@ -590,11 +590,198 @@ Localization follows a clean three-tier priority cascade:
 - **Zero Gamification Policy**:
   - Assessments deliberately do not award points, streaks, or badges. This prevents clinical evaluations from being gamified or completed compulsively for rewards.
 
-### Community (SRS 2.4)
-- `GET /community/topics` — planned: list discussion spaces.
-- `GET /community/posts` — planned: list paginated anonymous posts.
-- `POST /community/posts` — planned: create an anonymous post.
-- `POST /community/posts/:id/comments` — planned: comment on a post.
+### Community (SRS 2.4, FR-4.1 to FR-4.5) — Phase B4 Implemented
+
+#### `GET /api/community/topics`
+- **Description**: Returns discussion spaces with localized name, description, and count of active non-deleted posts.
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Query Parameters**:
+  - `lang` *(optional)*: `'en'` or `'am'`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": [
+    {
+      "id": "44444444-4444-4000-a000-000000000001",
+      "slug": "job-search-unemployment",
+      "name": "Job Search & Unemployment",
+      "description": "A safe space to discuss career uncertainty, job-hunting burnout, and professional resilience.",
+      "postCount": 12
+    }
+  ]
+}
+```
+
+#### `GET /api/community/posts`
+- **Description**: Returns the community post feed, ordered newest-first with cursor-based pagination and optional topic filter.
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Query Parameters**:
+  - `cursor` *(optional)*: UUID of last seen post.
+  - `limit` *(optional)*: Integer between 1 and 50 (default: 20).
+  - `topicId` *(optional)*: Filter by topic UUID.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "55555555-5555-4000-a000-000000000001",
+        "topicId": "44444444-4444-4000-a000-000000000001",
+        "title": "Navigating post-graduate job search stress",
+        "content": "It has been 3 months since graduation and feeling overwhelmed by applications.",
+        "isPinned": false,
+        "createdAt": "2026-11-16T10:00:00.000Z",
+        "author": {
+          "handle": "HabeshaPioneer",
+          "avatarUrl": "https://example.com/avatar.png"
+        },
+        "isMine": false,
+        "reactedByMe": false,
+        "supportCount": 3,
+        "commentCount": 5
+      }
+    ],
+    "nextCursor": null
+  }
+}
+```
+
+#### `POST /api/community/posts`
+- **Description**: Publishes a new anonymous post in a designated topic space.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive` (blocking `RESTRICTED` / `SUSPENDED` users with 403 `ACCOUNT_RESTRICTED`).
+- **Rate Limit**: Maximum 10 posts per user per hour (error: `POST_RATE_LIMIT`).
+- **Request Body**:
+```json
+{
+  "topicId": "44444444-4444-4000-a000-000000000001",
+  "title": "Navigating post-graduate job search stress",
+  "content": "It has been 3 months since graduation and feeling overwhelmed by applications."
+}
+```
+- **Validation**:
+  - `title`: 1–150 characters, trimmed, contains `[\p{L}\p{N}]/u`.
+  - `content`: 1–5,000 characters, trimmed, contains `[\p{L}\p{N}]/u`.
+  - Unknown fields rejected (`.strict()`).
+- **Status Code**: `201 Created`
+- **Response**: Mapped `Post` object (same shape as feed item).
+- **Error Codes**: `400 VALIDATION_ERROR`, `403 ACCOUNT_RESTRICTED`, `404 TOPIC_NOT_FOUND`, `429 POST_RATE_LIMIT`.
+
+#### `GET /api/community/posts/:id`
+- **Description**: Retrieves a single community post. Excludes soft-deleted posts (`deletedAt: null`).
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Status Code**: `200 OK`
+- **Response**: Mapped `Post` object.
+- **Error Codes**: `404 POST_NOT_FOUND`.
+
+#### `DELETE /api/community/posts/:id`
+- **Description**: Author-initiated soft delete of a post. Sets `deletedAt: new Date()` to preserve moderation evidence while hiding the post from all public feeds and searches.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`. Only owning author can delete.
+- **Status Code**: `200 OK`
+- **Response**: `{ "data": { "success": true, "message": "Post deleted successfully." } }`
+- **Error Codes**: `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`.
+
+#### `GET /api/community/posts/:id/comments`
+- **Description**: Lists comments on a post, ordered oldest-first with cursor pagination. Excludes soft-deleted comments.
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Query Parameters**:
+  - `cursor` *(optional)*: UUID of last seen comment.
+  - `limit` *(optional)*: Integer between 1 and 50 (default: 20).
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "66666666-6666-4000-a000-000000000001",
+        "postId": "55555555-5555-4000-a000-000000000001",
+        "content": "Hang in there! The first few months are the hardest.",
+        "createdAt": "2026-11-16T10:15:00.000Z",
+        "author": {
+          "handle": "AddisSeeker",
+          "avatarUrl": null
+        },
+        "isMine": false
+      }
+    ],
+    "nextCursor": null
+  }
+}
+```
+- **Error Codes**: `404 POST_NOT_FOUND`.
+
+#### `POST /api/community/posts/:id/comments`
+- **Description**: Adds an anonymous comment to a post.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`.
+- **Rate Limit**: Maximum 30 comments per user per hour (error: `COMMENT_RATE_LIMIT`).
+- **Request Body**:
+```json
+{
+  "content": "Hang in there! The first few months are the hardest."
+}
+```
+- **Validation**:
+  - `content`: 1–1,000 characters, trimmed, contains `[\p{L}\p{N}]/u`.
+  - Unknown fields rejected (`.strict()`).
+- **Status Code**: `201 Created`
+- **Response**: Mapped `Comment` object.
+- **Error Codes**: `400 VALIDATION_ERROR`, `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`, `429 COMMENT_RATE_LIMIT`.
+
+#### `DELETE /api/community/comments/:id`
+- **Description**: Author-initiated soft delete of a comment (`deletedAt: new Date()`).
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`. Only owning author can delete.
+- **Status Code**: `200 OK`
+- **Response**: `{ "data": { "success": true, "message": "Comment deleted successfully." } }`
+- **Error Codes**: `403 ACCOUNT_RESTRICTED`, `404 COMMENT_NOT_FOUND`.
+
+#### `PUT /api/community/posts/:id/reactions/support`
+- **Description**: Idempotently adds a `SUPPORT` reaction to a post. Handled with database unique constraint collision resolution (`P2002`).
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "supportCount": 4,
+    "reactedByMe": true
+  }
+}
+```
+- **Error Codes**: `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`.
+
+#### `DELETE /api/community/posts/:id/reactions/support`
+- **Description**: Idempotently removes a `SUPPORT` reaction from a post.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "supportCount": 3,
+    "reactedByMe": false
+  }
+}
+```
+- **Error Codes**: `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`.
+
+### 8. Community Privacy & Architecture Design (Phase B4)
+
+- **Author Privacy Mapper Pattern**:
+  - The single gatekeeper transforming database records into API DTOs is `community.mapper.ts`.
+  - Prisma queries use explicit `select` clauses and are forbidden from selecting `VerifiedIdentity` or any foreign user IDs.
+  - The author object strictly exposes `{ handle: string, avatarUrl: string | null }`. Private fields (`userId`, `authorId`, `firstName`, `lastName`, `phone`, `email`, `bio`) are structurally impossible to leak.
+- **Deleted User Tombstone Rule**:
+  - When an author deletes their account, foreign keys cascade as `onDelete: SetNull`.
+  - The mapper detects null authors and renders `{ handle: "[Deleted User]", avatarUrl: null }`, maintaining discussion thread integrity without breaking UI layouts.
+- **Soft Deletion Rationale**:
+  - Author and moderator deletions set `deletedAt = new Date()` rather than executing `DELETE FROM`.
+  - Soft-deleted content is filtered out of active queries (`deletedAt: null`).
+  - Preserving the underlying row in PostgreSQL guarantees that Phase B5 safety reports and moderation incident histories retain their evidential integrity.
+- **Frontend Security Guidance**:
+  - Community text from peers must always be rendered as **untrusted plain text** (e.g. React default text interpolation `{post.content}`).
+  - Under no circumstances should user content be rendered via `dangerouslySetInnerHTML` or HTML parsers, completely neutralizing stored Cross-Site Scripting (XSS) vectors.
 
 ### Reports (SRS 2.5)
 - `POST /reports` — planned: report content or an account.
