@@ -195,6 +195,85 @@ All endpoints below are planned and are mounted under `/api`.
 - **Response**: `{ "data": { ...updatedRoutine } }`
 - **Error Codes**: `400 VALIDATION_ERROR`, `401 INVALID_TOKEN`, `403 ACCOUNT_RESTRICTED`, `404 ROUTINE_NOT_FOUND`.
 
+#### `GET /api/routines/today`
+- **Description**: Returns all active, non-deleted routines for the caller, annotated with `completedToday: boolean` indicating whether a check-in has been recorded for today in the `Africa/Addis_Ababa` timezone.
+- **Authentication**: `Authorization: Bearer <JWT>`
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "userId": "00000000-0000-4000-a000-000000000011",
+      "title": "Morning Mindful Walk",
+      "description": "15 minutes without phone",
+      "status": "ACTIVE",
+      "deletedAt": null,
+      "createdAt": "2026-11-16T12:00:00.000Z",
+      "updatedAt": "2026-11-16T12:00:00.000Z",
+      "completedToday": true
+    }
+  ]
+}
+```
+- **Error Codes**: `401 INVALID_TOKEN`.
+
+#### `POST /api/routines/:id/checkin`
+- **Description**: Records a daily completion for a routine. Automatically awards points (10), increments streaks, and unlocks milestone badges in a single atomic transaction.
+- **Authentication**: `Authorization: Bearer <JWT>` (requires `ACTIVE` account)
+- **Path Parameters**: `:id` (UUID)
+- **Status Code**: `200 OK`
+- **Response (First Check-in Today)**:
+```json
+{
+  "data": {
+    "completion": {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "routineId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "completedDate": "2026-11-16T00:00:00.000Z",
+      "createdAt": "2026-11-16T12:30:00.000Z"
+    },
+    "alreadyCompleted": false,
+    "pointsAwarded": 10,
+    "progress": {
+      "points": 10,
+      "currentStreak": 1,
+      "longestStreak": 1,
+      "lastCompletedDate": "2026-11-16"
+    },
+    "newBadges": [
+      {
+        "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+        "slug": "first-routine",
+        "name": "First Step",
+        "description": "Completed your very first daily routine.",
+        "pointsRequired": 10,
+        "iconUrl": null
+      }
+    ]
+  }
+}
+```
+- **Response (Subsequent Check-in Same Routine Same Day - Idempotent)**:
+```json
+{
+  "data": {
+    "completion": { ... },
+    "alreadyCompleted": true,
+    "pointsAwarded": 0,
+    "progress": {
+      "points": 10,
+      "currentStreak": 1,
+      "longestStreak": 1,
+      "lastCompletedDate": "2026-11-16"
+    },
+    "newBadges": []
+  }
+}
+```
+- **Error Codes**: `400 VALIDATION_ERROR`, `400 ROUTINE_NOT_ACTIVE` (routine is paused), `401 INVALID_TOKEN`, `403 ACCOUNT_RESTRICTED`, `404 ROUTINE_NOT_FOUND` (not found, soft-deleted, or belongs to another user).
+
 #### `DELETE /api/routines/:id`
 - **Description**: Soft deletes a routine by setting `deletedAt` to current timestamp.
 - **Authentication**: `Authorization: Bearer <JWT>` (requires `ACTIVE` account)
@@ -210,6 +289,75 @@ All endpoints below are planned and are mounted under `/api`.
 }
 ```
 - **Error Codes**: `400 VALIDATION_ERROR`, `401 INVALID_TOKEN`, `403 ACCOUNT_RESTRICTED`, `404 ROUTINE_NOT_FOUND`.
+
+---
+
+### Progress & Gamification (SRS 2.3) — Phase B2 Implemented
+
+#### `GET /api/progress`
+- **Description**: Retrieves the caller's cumulative points, effective current streak, longest streak, last completed date, and earned badges list.
+- **Authentication**: `Authorization: Bearer <JWT>`
+- **Query Parameters**:
+  - `lang` *(optional)*: `'en'` or `'am'` to localize earned badge descriptions.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "points": 150,
+    "currentStreak": 7,
+    "longestStreak": 12,
+    "lastCompletedDate": "2026-11-16",
+    "earnedBadges": [
+      {
+        "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+        "slug": "first-routine",
+        "name": "First Step",
+        "description": "Completed your very first daily routine.",
+        "pointsRequired": 10,
+        "iconUrl": null,
+        "awardedAt": "2026-11-10T08:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+- **Error Codes**: `401 INVALID_TOKEN`.
+
+#### `GET /api/badges`
+- **Description**: Lists all available system badges localized to the requested language, annotated with an `earned: boolean` flag and `awardedAt` timestamp.
+- **Authentication**: `Authorization: Bearer <JWT>`
+- **Query Parameters**:
+  - `lang` *(optional)*: `'en'` or `'am'`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": [
+    {
+      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "slug": "first-routine",
+      "name": "First Step",
+      "description": "Completed your very first daily routine.",
+      "pointsRequired": 10,
+      "iconUrl": null,
+      "earned": true,
+      "awardedAt": "2026-11-10T08:00:00.000Z"
+    },
+    {
+      "id": "e5f6a7b8-9012-cdef-1234-567890123456",
+      "slug": "growth-master",
+      "name": "Master of Growth",
+      "description": "Achieved 300 wellness points through persistent habit practice.",
+      "pointsRequired": 300,
+      "iconUrl": null,
+      "earned": false,
+      "awardedAt": null
+    }
+  ]
+}
+```
+- **Error Codes**: `401 INVALID_TOKEN`.
 
 ---
 
@@ -241,6 +389,26 @@ Localization follows a clean three-tier priority cascade:
 1. Explicit request query parameter `?lang=en|am` (highest priority; allows instant preview toggling).
 2. Authenticated user's `preferredLanguage` setting.
 3. Fallback default to English (`en`).
+
+### 6. How Points, Streaks, and Gamification Work (Phase B2)
+- **Timezone Anchor (`Africa/Addis_Ababa`)**:
+  Ethiopia operates in East Africa Time (EAT), which is UTC+3 with no Daylight Saving Time. Day boundaries and streak continuity are calculated against the Ethiopian local calendar day. For example, 20:59:59 UTC is 23:59:59 EAT (same day), while 21:00:00 UTC is 00:00:00 EAT (start of the next calendar day).
+- **Points Award & Idempotency**:
+  - Each unique routine completion awards **10 points** (`POINTS_PER_COMPLETION`).
+  - Checking in to the same routine more than once on the same Addis calendar day is strictly idempotent: the API returns `alreadyCompleted: true` with `pointsAwarded: 0`, and no streak increment.
+  - Completing different routines on the same day awards points for each routine (e.g. 10 + 10 = 20 points), but the daily streak only increments once per calendar day.
+- **Streak Calculation Logic**:
+  - **Same calendar day** as `lastCompletedDate`: streak remains unchanged.
+  - **Consecutive calendar day** (completed yesterday): `currentStreak` increments by 1.
+  - **Missed day(s)** (gap > 1 day or first time): `currentStreak` resets to 1.
+  - `longestStreak` is monotonically maintained as `max(longestStreak, currentStreak)` and is preserved even when `currentStreak` resets.
+- **Effective Streak on Read**:
+  If a user has not checked in today or yesterday (`lastCompletedDate` is older than yesterday in Addis Ababa), their streak is broken. The `GET /api/progress` endpoint reports `currentStreak: 0` on the fly without requiring a midnight database write cron job.
+- **Automatic Badge Unlocking**:
+  Milestone badges are earned based on cumulative points thresholds (`pointsRequired`). During check-in, unearned badges whose thresholds have been reached are automatically and atomically granted in the database transaction.
+- **Design Decision — No Completion Undo**:
+  Completion records (`RoutineCompletion`) cannot be undone or revoked in this phase. This preserves mathematical monotonicity for points, prevents negative point reconciliation anomalies, and keeps streak histories tamper-resistant.
+
 
 
 ### Community (SRS 2.4)
