@@ -143,16 +143,16 @@ test('Routines Module Integration Tests', async (t) => {
   // ---------------------------------------------------------------------------
   // 1. STARTER ROUTINES & LOCALIZATION
   // ---------------------------------------------------------------------------
-  await t.test('GET /routines/starter - requires authentication', async () => {
-    const res = await api.get('/routines/starter');
+  await t.test('GET /api/routines/starter - requires authentication', async () => {
+    const res = await api.get('/api/routines/starter');
     assert.equal(res.status, 401);
     assert.equal(res.body.error.code, 'INVALID_TOKEN');
   });
 
-  await t.test('GET /routines/starter - returns localized starter routines in English and Amharic', async () => {
+  await t.test('GET /api/routines/starter - returns localized starter routines in English and Amharic', async () => {
     // English query
     const resEn = await api
-      .get('/routines/starter?lang=en')
+      .get('/api/routines/starter?lang=en')
       .set('Authorization', `Bearer ${tokenUserA}`);
     assert.equal(resEn.status, 200);
     assert.ok(Array.isArray(resEn.body.data));
@@ -165,7 +165,7 @@ test('Routines Module Integration Tests', async (t) => {
 
     // Amharic query
     const resAm = await api
-      .get('/routines/starter?lang=am')
+      .get('/api/routines/starter?lang=am')
       .set('Authorization', `Bearer ${tokenUserA}`);
     assert.equal(resAm.status, 200);
     assert.ok(Array.isArray(resAm.body.data));
@@ -175,13 +175,13 @@ test('Routines Module Integration Tests', async (t) => {
   });
 
   // ---------------------------------------------------------------------------
-  // 2. CREATE ROUTINE (POST /routines) & VALIDATION
+  // 2. CREATE ROUTINE (POST /api/routines) & VALIDATION
   // ---------------------------------------------------------------------------
   let routineOneId = '';
 
-  await t.test('POST /routines - creates a routine (happy path)', async () => {
+  await t.test('POST /api/routines - creates a routine (happy path)', async () => {
     const res = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({
         title: '  Morning Mindful Walk  ',
@@ -198,10 +198,10 @@ test('Routines Module Integration Tests', async (t) => {
     assert.ok(routineOneId);
   });
 
-  await t.test('POST /routines - rejects empty or symbol-only titles', async () => {
+  await t.test('POST /api/routines - rejects empty or symbol-only titles', async () => {
     // Empty title
     const resEmpty = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({ title: '    ' });
     assert.equal(resEmpty.status, 400);
@@ -209,7 +209,7 @@ test('Routines Module Integration Tests', async (t) => {
 
     // Symbol-only title
     const resSymbols = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({ title: '!@#$%^&*()_+' });
     assert.equal(resSymbols.status, 400);
@@ -217,25 +217,25 @@ test('Routines Module Integration Tests', async (t) => {
 
     // Title exceeding 100 characters
     const resTooLong = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({ title: 'a'.repeat(101) });
     assert.equal(resTooLong.status, 400);
     assert.equal(resTooLong.body.error.code, 'VALIDATION_ERROR');
   });
 
-  await t.test('POST /routines - accepts Amharic Unicode title', async () => {
+  await t.test('POST /api/routines - accepts Amharic Unicode title', async () => {
     const res = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({ title: 'የጠዋት ፀሎት እና ማሰላሰል' });
     assert.equal(res.status, 201);
     assert.equal(res.body.data.title, 'የጠዋት ፀሎት እና ማሰላሰል');
   });
 
-  await t.test('POST /routines - rejects unknown body fields (.strict())', async () => {
+  await t.test('POST /api/routines - rejects unknown body fields (.strict())', async () => {
     const res = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({
         title: 'Valid Routine Title',
@@ -248,9 +248,9 @@ test('Routines Module Integration Tests', async (t) => {
   // ---------------------------------------------------------------------------
   // 3. READ ROUTINES & CURSOR PAGINATION
   // ---------------------------------------------------------------------------
-  await t.test('GET /routines - lists caller routines with cursor pagination', async () => {
+  await t.test('GET /api/routines - lists caller routines with cursor pagination', async () => {
     const res = await api
-      .get('/routines?limit=1')
+      .get('/api/routines?limit=1')
       .set('Authorization', `Bearer ${tokenUserA}`);
 
     assert.equal(res.status, 200);
@@ -260,7 +260,7 @@ test('Routines Module Integration Tests', async (t) => {
 
     // Fetch next page with cursor
     const nextRes = await api
-      .get(`/routines?cursor=${res.body.data.nextCursor}&limit=1`)
+      .get(`/api/routines?cursor=${res.body.data.nextCursor}&limit=1`)
       .set('Authorization', `Bearer ${tokenUserA}`);
 
     assert.equal(nextRes.status, 200);
@@ -269,18 +269,18 @@ test('Routines Module Integration Tests', async (t) => {
     assert.notEqual(nextRes.body.data.items[0].id, res.body.data.items[0].id);
   });
 
-  await t.test('GET /routines/:id - returns own routine', async () => {
+  await t.test('GET /api/routines/:id - returns own routine', async () => {
     const res = await api
-      .get(`/routines/${routineOneId}`)
+      .get(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenUserA}`);
 
     assert.equal(res.status, 200);
     assert.equal(res.body.data.id, routineOneId);
   });
 
-  await t.test('GET /routines/:id - validates UUID format', async () => {
+  await t.test('GET /api/routines/:id - validates UUID format', async () => {
     const res = await api
-      .get('/routines/not-a-valid-uuid')
+      .get('/api/routines/not-a-valid-uuid')
       .set('Authorization', `Bearer ${tokenUserA}`);
 
     assert.equal(res.status, 400);
@@ -292,7 +292,7 @@ test('Routines Module Integration Tests', async (t) => {
   // ---------------------------------------------------------------------------
   await t.test('OWNERSHIP - User B cannot view User A routine (returns 404, not 403)', async () => {
     const res = await api
-      .get(`/routines/${routineOneId}`)
+      .get(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenUserB}`);
 
     assert.equal(res.status, 404);
@@ -301,7 +301,7 @@ test('Routines Module Integration Tests', async (t) => {
 
   await t.test('OWNERSHIP - User B cannot patch User A routine (returns 404, not 403)', async () => {
     const res = await api
-      .patch(`/routines/${routineOneId}`)
+      .patch(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenUserB}`)
       .send({ status: 'PAUSED' });
 
@@ -311,7 +311,7 @@ test('Routines Module Integration Tests', async (t) => {
 
   await t.test('OWNERSHIP - User B cannot delete User A routine (returns 404, not 403)', async () => {
     const res = await api
-      .delete(`/routines/${routineOneId}`)
+      .delete(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenUserB}`);
 
     assert.equal(res.status, 404);
@@ -319,11 +319,11 @@ test('Routines Module Integration Tests', async (t) => {
   });
 
   // ---------------------------------------------------------------------------
-  // 5. UPDATE ROUTINE (PATCH /routines/:id)
+  // 5. UPDATE ROUTINE (PATCH /api/routines/:id)
   // ---------------------------------------------------------------------------
-  await t.test('PATCH /routines/:id - updates title and status', async () => {
+  await t.test('PATCH /api/routines/:id - updates title and status', async () => {
     const res = await api
-      .patch(`/routines/${routineOneId}`)
+      .patch(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({
         title: 'Updated Routine Title',
@@ -335,9 +335,9 @@ test('Routines Module Integration Tests', async (t) => {
     assert.equal(res.body.data.status, 'PAUSED');
   });
 
-  await t.test('PATCH /routines/:id - rejects empty payload', async () => {
+  await t.test('PATCH /api/routines/:id - rejects empty payload', async () => {
     const res = await api
-      .patch(`/routines/${routineOneId}`)
+      .patch(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({});
 
@@ -346,11 +346,11 @@ test('Routines Module Integration Tests', async (t) => {
   });
 
   // ---------------------------------------------------------------------------
-  // 6. SOFT DELETE (DELETE /routines/:id)
+  // 6. SOFT DELETE (DELETE /api/routines/:id)
   // ---------------------------------------------------------------------------
-  await t.test('DELETE /routines/:id - soft deletes routine and hides it from views', async () => {
+  await t.test('DELETE /api/routines/:id - soft deletes routine and hides it from views', async () => {
     const res = await api
-      .delete(`/routines/${routineOneId}`)
+      .delete(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenUserA}`);
 
     assert.equal(res.status, 200);
@@ -361,15 +361,15 @@ test('Routines Module Integration Tests', async (t) => {
     assert.ok(inDb);
     assert.notEqual(inDb.deletedAt, null);
 
-    // GET /routines/:id now returns 404
+    // GET /api/routines/:id now returns 404
     const getRes = await api
-      .get(`/routines/${routineOneId}`)
+      .get(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenUserA}`);
     assert.equal(getRes.status, 404);
 
-    // Routine is no longer in GET /routines listing
+    // Routine is no longer in GET /api/routines listing
     const listRes = await api
-      .get('/routines')
+      .get('/api/routines')
       .set('Authorization', `Bearer ${tokenUserA}`);
     const found = listRes.body.data.items.find((item: any) => item.id === routineOneId);
     assert.equal(found, undefined);
@@ -385,7 +385,7 @@ test('Routines Module Integration Tests', async (t) => {
     // Create 20 active routines
     for (let i = 1; i <= 20; i++) {
       const res = await api
-        .post('/routines')
+        .post('/api/routines')
         .set('Authorization', `Bearer ${tokenUserA}`)
         .send({ title: `Quota Routine Number ${i}` });
       assert.equal(res.status, 201, `Failed to create routine ${i}`);
@@ -393,7 +393,7 @@ test('Routines Module Integration Tests', async (t) => {
 
     // 21st routine creation must fail with ROUTINE_LIMIT_REACHED
     const quotaRes = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenUserA}`)
       .send({ title: 'Twenty-First Routine Attempt' });
 
@@ -407,27 +407,27 @@ test('Routines Module Integration Tests', async (t) => {
   await t.test('STATUS - RESTRICTED user blocked from POST, PATCH, DELETE but can GET', async () => {
     // Reads are allowed
     const getRes = await api
-      .get('/routines')
+      .get('/api/routines')
       .set('Authorization', `Bearer ${tokenRestricted}`);
     assert.equal(getRes.status, 200);
 
     // Writes are blocked with 403 ACCOUNT_RESTRICTED
     const postRes = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenRestricted}`)
       .send({ title: 'Blocked Routine' });
     assert.equal(postRes.status, 403);
     assert.equal(postRes.body.error.code, 'ACCOUNT_RESTRICTED');
 
     const patchRes = await api
-      .patch(`/routines/${routineOneId}`)
+      .patch(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenRestricted}`)
       .send({ title: 'Blocked Routine' });
     assert.equal(patchRes.status, 403);
     assert.equal(patchRes.body.error.code, 'ACCOUNT_RESTRICTED');
 
     const deleteRes = await api
-      .delete(`/routines/${routineOneId}`)
+      .delete(`/api/routines/${routineOneId}`)
       .set('Authorization', `Bearer ${tokenRestricted}`);
     assert.equal(deleteRes.status, 403);
     assert.equal(deleteRes.body.error.code, 'ACCOUNT_RESTRICTED');
@@ -435,7 +435,7 @@ test('Routines Module Integration Tests', async (t) => {
 
   await t.test('STATUS - SUSPENDED user blocked from writes', async () => {
     const postRes = await api
-      .post('/routines')
+      .post('/api/routines')
       .set('Authorization', `Bearer ${tokenSuspended}`)
       .send({ title: 'Blocked Routine' });
     assert.equal(postRes.status, 403);

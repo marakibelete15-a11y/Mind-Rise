@@ -14,7 +14,8 @@ export const createApp = (): Express => {
       credentials: true,
     }),
   );
-  app.use(express.json());
+  // Request body parsing with strict 100kb payload limit (DoS mitigation)
+  app.use(express.json({ limit: '100kb' }));
 
   // Mount application routes
   app.use('/', routes);
