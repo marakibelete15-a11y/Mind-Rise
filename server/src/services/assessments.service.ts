@@ -29,9 +29,14 @@ import * as crisisService from './crisis.service.js';
 import {
   getLocalizedSummary,
   getLocalizedDisclaimer,
-  getLocalizedEmergencyFallback,
   OPTION_LABELS,
 } from '../content/assessment-summaries.js';
+import {
+  getActiveCrisisResources,
+  CrisisResourceDTO,
+} from '../utils/crisis-resources.js';
+
+export type { CrisisResourceDTO };
 
 /**
  * Crisis notifier adapter.
@@ -54,12 +59,6 @@ export interface AssessmentAttemptSummaryDTO {
   summaryKey: string;
   summary: string;
   createdAt: Date;
-}
-
-export interface CrisisResourceDTO {
-  name: string;
-  description: string;
-  phone: string;
 }
 
 export interface SubmitAttemptResponseDTO {
@@ -272,28 +271,9 @@ export async function submitAttempt(
   let emergencyMessage: string | undefined = undefined;
 
   if (riskFlagged) {
-    try {
-      const activeResources = await prisma.crisisResource.findMany({
-        where: { isActive: true },
-        orderBy: { createdAt: 'asc' },
-      });
-
-      crisisResources = activeResources.map((r) => ({
-        name: pickLocalized(r.nameEn, r.nameAm, lang),
-        description: pickLocalized(r.descriptionEn, r.descriptionAm, lang),
-        phone: r.phone,
-      }));
-
-      if (crisisResources.length === 0) {
-        emergencyMessage = getLocalizedEmergencyFallback(lang);
-      }
-    } catch (err) {
-      console.error('Failed to query crisis resources', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      crisisResources = [];
-      emergencyMessage = getLocalizedEmergencyFallback(lang);
-    }
+    const crisisData = await getActiveCrisisResources(lang);
+    crisisResources = crisisData.resources;
+    emergencyMessage = crisisData.emergencyMessage;
   }
 
   // Return sanitized response: NEVER expose riskFlagged field or the word 'flagged' to the user
