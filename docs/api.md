@@ -665,7 +665,31 @@ Localization follows a clean three-tier priority cascade:
   - `content`: 1–5,000 characters, trimmed, contains `[\p{L}\p{N}]/u`.
   - Unknown fields rejected (`.strict()`).
 - **Status Code**: `201 Created`
-- **Response**: Mapped `Post` object (same shape as feed item).
+- **Response**: Mapped `Post` object enriched with `crisis` resources (show is `false` when benign).
+```json
+{
+  "data": {
+    "id": "55555555-5555-4000-a000-000000000001",
+    "topicId": "44444444-4444-4000-a000-000000000001",
+    "title": "Navigating post-graduate job search stress",
+    "content": "It has been 3 months since graduation and feeling overwhelmed by applications.",
+    "isPinned": false,
+    "createdAt": "2026-11-16T10:00:00.000Z",
+    "author": {
+      "handle": "HabeshaPioneer",
+      "avatarUrl": "https://example.com/avatar.png"
+    },
+    "isMine": true,
+    "reactedByMe": false,
+    "supportCount": 0,
+    "commentCount": 0,
+    "crisis": {
+      "show": false,
+      "resources": []
+    }
+  }
+}
+```
 - **Error Codes**: `400 VALIDATION_ERROR`, `403 ACCOUNT_RESTRICTED`, `404 TOPIC_NOT_FOUND`, `429 POST_RATE_LIMIT`.
 
 #### `GET /api/community/posts/:id`
@@ -726,7 +750,26 @@ Localization follows a clean three-tier priority cascade:
   - `content`: 1–1,000 characters, trimmed, contains `[\p{L}\p{N}]/u`.
   - Unknown fields rejected (`.strict()`).
 - **Status Code**: `201 Created`
-- **Response**: Mapped `Comment` object.
+- **Response**: Mapped `Comment` object enriched with `crisis` resources.
+```json
+{
+  "data": {
+    "id": "66666666-6666-4000-a000-000000000001",
+    "postId": "55555555-5555-4000-a000-000000000001",
+    "content": "Hang in there! The first few months are the hardest.",
+    "createdAt": "2026-11-16T10:15:00.000Z",
+    "author": {
+      "handle": "AddisSeeker",
+      "avatarUrl": null
+    },
+    "isMine": true,
+    "crisis": {
+      "show": false,
+      "resources": []
+    }
+  }
+}
+```
 - **Error Codes**: `400 VALIDATION_ERROR`, `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`, `429 COMMENT_RATE_LIMIT`.
 
 #### `DELETE /api/community/comments/:id`
@@ -783,8 +826,66 @@ Localization follows a clean three-tier priority cascade:
   - Community text from peers must always be rendered as **untrusted plain text** (e.g. React default text interpolation `{post.content}`).
   - Under no circumstances should user content be rendered via `dangerouslySetInnerHTML` or HTML parsers, completely neutralizing stored Cross-Site Scripting (XSS) vectors.
 
-### Reports (SRS 2.5)
-- `POST /reports` — planned: report content or an account.
+### Reports (SRS 2.5, FR-4.4) — Phase B5 Implemented
+
+#### `POST /api/reports`
+- **Description**: Submits a user moderation report against an active community post or comment.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive` (403 for `RESTRICTED` or `SUSPENDED` users).
+- **Rate Limit**: Maximum 20 reports per user per hour (error: `REPORT_RATE_LIMIT`).
+- **Request Body**:
+```json
+{
+  "targetType": "POST",
+  "targetId": "55555555-5555-4000-a000-000000000001",
+  "reason": "Harassment or inappropriate language."
+}
+```
+- **Validation**:
+  - `targetType`: Required enum, either `'POST'` or `'COMMENT'`. (ACCOUNT reports are disallowed per privacy architecture).
+  - `targetId`: Required valid UUID.
+  - `reason`: Optional string, trimmed, max 500 characters, must contain alphanumeric characters if provided.
+  - Unknown fields rejected (`.strict()`).
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "received": true
+  }
+}
+```
+- **Idempotency**: Submitting duplicate reports for the same target by the same reporter returns `200 OK` with `{ "data": { "received": true } }` without creating duplicate database rows or re-triggering hooks.
+- **Error Codes**:
+  - `400 VALIDATION_ERROR`: Malformed input or forbidden fields.
+  - `400 CANNOT_REPORT_OWN_CONTENT`: Attempting to report content authored by oneself.
+  - `401 INVALID_TOKEN`: Missing or invalid auth credentials.
+  - `403 ACCOUNT_RESTRICTED`: Caller's account status is not `ACTIVE`.
+  - `404 TARGET_NOT_FOUND`: Target post or comment does not exist or has been soft-deleted.
+  - `429 REPORT_RATE_LIMIT`: Exceeded the quota of 20 reports per hour.
+
+### 9. Risk Scanning & Reports Design (Phase B5)
+
+- **Non-Blocking Safety Rule (SRS FR-4.6)**:
+  - Safety keyword/regex scanning and `crisisService.raiseFlag` notifications must NEVER delay, abort, or prevent content creation.
+  - Even if notification services or downstream queues fail, the post or comment creation completes with HTTP 201, safely returning the created content alongside localized emergency support resources.
+- **Zero Flag Disclosure Policy**:
+  - The API deliberately never reveals to the user whether their content triggered a risk flag or was flagged by the system.
+  - The response payload strictly omits internal terms like `"flag"`, `"flagged"`, and priority ratings (`"CRITICAL"`, `"HIGH"`).
+  - Instead, constructive, non-stigmatizing crisis resources are provided in `{ crisis: { show: boolean, resources: [...] } }`.
+- **Placeholder Catalog Notice (SRS 6.3, FR-6.4)**:
+  - The risk phrase lists in `server/src/content/risk-phrases.ts` are provisional placeholders based on mental health safety guidelines.
+  - A keyword scan functions solely as a safety net, NOT as a psychological diagnostic tool or clinician substitute; it will inevitably have both false positives and false negatives.
+  - Formal clinical review and psychiatric validation by licensed Ethiopian mental health professionals and native Amharic linguists is required prior to production release.
+- **Strict Reporter Anonymity & Privacy**:
+  - The report response is strictly `{ "data": { "received": true } }`.
+  - Reporter user IDs are recorded internally in PostgreSQL for moderation audit integrity, but are never returned in HTTP responses or shared with reported authors.
+  - Normal users have no access to list or query reports.
+- **Why ACCOUNT Reports Are Not Exposed**:
+  - MindRise's peer community architecture strictly conceals user IDs from peers to protect user privacy (SRS FR-4.1).
+  - Exposing an `ACCOUNT` report endpoint would require exposing account identifiers to the client. Instead, users report specific posts or comments, and moderators navigate to the author account via the reported content.
+- **Part A Moderation Integration Hook (`onReportCreated`)**:
+  - After each new report is persisted, `reportHook.onReportCreated(report)` is called.
+  - Part A's automated threshold monitoring and auto-restriction system (SRS FR-7.5) plugs directly into this hook to count reports within rolling time windows and apply automated safety measures.
 
 ### Crisis (SRS 2.5)
 - `GET /crisis/resources` — planned: list verified local crisis hotlines.
@@ -792,3 +893,4 @@ Localization follows a clean three-tier priority cascade:
 ### Moderation (SRS 2.5)
 - `GET /moderation/reports` — planned: view moderation queue.
 - `POST /moderation/actions` — planned: record a moderation action.
+
