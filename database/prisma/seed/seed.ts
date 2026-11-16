@@ -453,6 +453,14 @@ async function main() {
       descriptionAm: 'የመጀመሪያውን የአእምሮ ጤና እና የደህንነት ምዘና አጠናቀዋል።',
       pointsRequired: 30,
     },
+    {
+      slug: 'growth-master',
+      nameEn: 'Master of Growth',
+      nameAm: 'የእድገት ባለቤት',
+      descriptionEn: 'Achieved 300 wellness points through persistent habit practice.',
+      descriptionAm: 'በቀጣይነት ባሳዩት የልማድ ትጋት 300 የጤና ነጥቦችን አግኝተዋል።',
+      pointsRequired: 300,
+    },
   ];
 
   for (const badge of badges) {

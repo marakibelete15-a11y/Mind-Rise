@@ -14,7 +14,8 @@ const encryptionKey = process.env.ENCRYPTION_KEY;
 const hashPepper = process.env.HASH_PEPPER;
 if (encryptionKey && !/^[0-9a-fA-F]{64}$/.test(encryptionKey)) throw new Error('ENCRYPTION_KEY must be 32 bytes encoded as 64 hex characters.');
 export const config = {
-  env, port: parseInt(process.env.PORT || '5000', 10), clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+  get env() { return process.env.NODE_ENV || 'development'; },
+  port: parseInt(process.env.PORT || '5000', 10), clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
   jwt: { secret: jwtSecret || '', expiresIn: process.env.JWT_EXPIRES_IN || '1d' },
   encryptionKey: encryptionKey || '', hashPepper: hashPepper || '',
   database: { url: process.env.DATABASE_URL || '' },
