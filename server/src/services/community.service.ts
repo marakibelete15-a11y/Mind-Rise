@@ -14,7 +14,11 @@
  *    conflicts to ensure parallel requests resolve idempotently without throwing 500 errors.
  */
 
-import prisma, { ReactionType } from '@mindrise/database';
+import prisma, {
+  ReactionType,
+  CrisisSource,
+  CrisisPriority,
+} from '@mindrise/database';
 import { AppError } from '../middleware/errorHandler.js';
 import { SupportedLanguage, pickLocalized } from '../utils/localize.js';
 import {
@@ -24,22 +28,100 @@ import {
   CommentResponseDTO,
   TopicResponseDTO,
 } from '../utils/community.mapper.js';
+import * as crisisService from './crisis.service.js';
+import {
+  getActiveCrisisResources,
+  CrisisPayloadDTO,
+} from '../utils/crisis-resources.js';
+import { scanText } from '../utils/risk-scanner.js';
+
+export interface PostWithCrisisDTO extends PostResponseDTO {
+  crisis: CrisisPayloadDTO;
+}
+
+export interface CommentWithCrisisDTO extends CommentResponseDTO {
+  crisis: CrisisPayloadDTO;
+}
+
+/**
+ * Crisis notifier adapter.
+ * Allows Part B community to invoke Part A's crisis service while
+ * remaining cleanly spyable and mockable in tests without touching Part A files.
+ */
+export const crisisNotifier = {
+  raiseFlag: (input: {
+    userId: string;
+    source: CrisisSource;
+    sourceId: string;
+    priority: CrisisPriority;
+  }) => crisisService.raiseFlag(input),
+};
 
 export interface ContentCreatedPayload {
   type: 'POST' | 'COMMENT';
   id: string;
   content: string;
   authorId: string;
+  lang?: SupportedLanguage;
 }
 
 /**
- * Hook triggered after any community post or comment is saved.
- * Phase B5: risk-language scan goes here.
+ * Hook triggered after any community post or comment is saved (SRS FR-4.6).
+ * Scans content for risk language. If matched, notifies crisis service and retrieves
+ * localized crisis resources.
+ *
+ * NON-BLOCKING SAFETY RULE:
+ * This scan and flag escalation must NEVER throw, abort, or delay creation,
+ * nor reveal to the client that content was flagged or internal flag priorities.
  */
-export async function onContentCreated(payload: ContentCreatedPayload): Promise<void> {
-  // Phase B5: risk-language scan goes here.
-  // Intentional no-op in Phase B4.
-  void payload;
+export async function onContentCreated(
+  payload: ContentCreatedPayload
+): Promise<CrisisPayloadDTO> {
+  const defaultCrisis: CrisisPayloadDTO = { show: false, resources: [] };
+  try {
+    const scanResult = scanText(payload.content);
+    if (!scanResult.matched || !scanResult.priority) {
+      return defaultCrisis;
+    }
+
+    // Flag escalation (inside try/catch to maintain non-blocking behavior)
+    try {
+      await crisisNotifier.raiseFlag({
+        userId: payload.authorId,
+        // The CrisisSource enum defines ASSESSMENT and POST.
+        // For comments, we use source POST with the comment's UUID in sourceId.
+        source: CrisisSource.POST,
+        sourceId: payload.id,
+        priority:
+          scanResult.priority === 'CRITICAL'
+            ? CrisisPriority.CRITICAL
+            : CrisisPriority.HIGH,
+      });
+    } catch (err) {
+      // Log only UUIDs and error message; NEVER log content or matched phrases
+      console.error('Crisis escalation raiseFlag failed', {
+        userId: payload.authorId,
+        sourceId: payload.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Retrieve active crisis resources localized for the user
+    const crisisResources = await getActiveCrisisResources(payload.lang ?? 'en');
+    return {
+      show: true,
+      resources: crisisResources.resources,
+      ...(crisisResources.emergencyMessage
+        ? { emergencyMessage: crisisResources.emergencyMessage }
+        : {}),
+    };
+  } catch (err) {
+    console.error('Safety scan execution failed', {
+      sourceId: payload.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return defaultCrisis;
+  }
 }
 
 /**
@@ -81,8 +163,9 @@ export async function createPost(
     topicId: string;
     title: string;
     content: string;
-  }
-): Promise<PostResponseDTO> {
+  },
+  lang: SupportedLanguage = 'en'
+): Promise<PostWithCrisisDTO> {
   // 1. Verify Topic Space Exists
   const topic = await prisma.topic.findUnique({
     where: { id: input.topicId },
@@ -138,19 +221,26 @@ export async function createPost(
     },
   });
 
-  // 4. Trigger Phase B5 Safety Hook
-  await onContentCreated({
+  // 4. Trigger Phase B5 Safety Hook (scans title + content)
+  const textToScan = `${input.title} ${input.content}`;
+  const crisis = await onContentCreated({
     type: 'POST',
     id: post.id,
-    content: post.content,
+    content: textToScan,
     authorId: userId,
+    lang,
   });
 
-  return mapPost(post, userId, {
+  const mapped = mapPost(post, userId, {
     reactedByMe: false,
     supportCount: 0,
     commentCount: 0,
   });
+
+  return {
+    ...mapped,
+    crisis,
+  };
 }
 
 /**
@@ -341,8 +431,9 @@ export async function deletePost(
 export async function createComment(
   userId: string,
   postId: string,
-  content: string
-): Promise<CommentResponseDTO> {
+  content: string,
+  lang: SupportedLanguage = 'en'
+): Promise<CommentWithCrisisDTO> {
   // 1. Verify Parent Post Exists and is not Deleted
   const post = await prisma.post.findFirst({
     where: {
@@ -400,14 +491,20 @@ export async function createComment(
   });
 
   // 4. Trigger Phase B5 Safety Hook
-  await onContentCreated({
+  const crisis = await onContentCreated({
     type: 'COMMENT',
     id: comment.id,
     content: comment.content,
     authorId: userId,
+    lang,
   });
 
-  return mapComment(comment, userId);
+  const mapped = mapComment(comment, userId);
+
+  return {
+    ...mapped,
+    crisis,
+  };
 }
 
 /**

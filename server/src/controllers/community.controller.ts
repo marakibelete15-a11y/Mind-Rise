@@ -52,9 +52,11 @@ export const listTopicsHandler = asyncHandler(async (req: Request, res: Response
  */
 export const createPostHandler = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user!.id;
+  const userLang = (req.user as { preferredLanguage?: string } | undefined)?.preferredLanguage;
+  const lang = resolveLanguage(req.query.lang, userLang);
   const validatedBody = createPostSchema.parse(req.body);
 
-  const post = await createPost(userId, validatedBody);
+  const post = await createPost(userId, validatedBody, lang);
   sendSuccess(res, post, 201);
 });
 
@@ -100,10 +102,12 @@ export const deletePostHandler = asyncHandler(async (req: Request, res: Response
  */
 export const createCommentHandler = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user!.id;
+  const userLang = (req.user as { preferredLanguage?: string } | undefined)?.preferredLanguage;
+  const lang = resolveLanguage(req.query.lang, userLang);
   const { id } = postIdParamSchema.parse(req.params);
   const validatedBody = createCommentSchema.parse(req.body);
 
-  const comment = await createComment(userId, id, validatedBody.content);
+  const comment = await createComment(userId, id, validatedBody.content, lang);
   sendSuccess(res, comment, 201);
 });
 
