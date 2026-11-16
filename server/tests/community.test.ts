@@ -3,9 +3,16 @@ import assert from 'node:assert/strict';
 import { Server } from 'http';
 import { AddressInfo } from 'net';
 import jwt from 'jsonwebtoken';
-import prisma, { UserRole, AccountStatus, Language } from '@mindrise/database';
+import prisma, {
+  UserRole,
+  AccountStatus,
+  Language,
+  CrisisPriority,
+  CrisisSource,
+} from '@mindrise/database';
 import { createApp } from '../src/app.js';
 import { config } from '../src/config/index.js';
+import { crisisNotifier } from '../src/services/community.service.js';
 
 // Supertest-compatible lightweight HTTP client using native Node fetch
 class TestRequest {
@@ -108,6 +115,34 @@ function assertNoIdentityLeak(obj: unknown, path = 'root') {
       `Forbidden privacy leak: Key "${key}" found at ${path}.${key}`
     );
     assertNoIdentityLeak(value, `${path}.${key}`);
+  }
+}
+
+/**
+ * Recursively asserts that no safety disclosure terms ('flag', 'flagged', 'priority')
+ * appear anywhere in keys or string values of a response payload.
+ */
+function assertNoCrisisLeak(obj: unknown, path = 'root') {
+  if (obj === null || obj === undefined) return;
+  if (typeof obj === 'string') {
+    const lower = obj.toLowerCase();
+    assert.equal(lower.includes('flagged'), false, `Found "flagged" at ${path}: "${obj}"`);
+    assert.equal(lower.includes('flag'), false, `Found "flag" at ${path}: "${obj}"`);
+    assert.equal(lower.includes('priority'), false, `Found "priority" at ${path}: "${obj}"`);
+    return;
+  }
+  if (Array.isArray(obj)) {
+    obj.forEach((item, index) => assertNoCrisisLeak(item, `${path}[${index}]`));
+    return;
+  }
+  if (typeof obj === 'object') {
+    for (const [key, value] of Object.entries(obj)) {
+      const lowerKey = key.toLowerCase();
+      assert.equal(lowerKey.includes('flagged'), false, `Found key "flagged" at ${path}.${key}`);
+      assert.equal(lowerKey.includes('flag'), false, `Found key "flag" at ${path}.${key}`);
+      assert.equal(lowerKey.includes('priority'), false, `Found key "priority" at ${path}.${key}`);
+      assertNoCrisisLeak(value, `${path}.${key}`);
+    }
   }
 }
 
@@ -687,5 +722,154 @@ test('Anonymous Community Module Integration & Privacy Tests (SRS FR-4.1 to FR-4
 
     assert.equal(resEleventh.status, 429);
     assert.equal(resEleventh.body.error.code, 'POST_RATE_LIMIT');
+  });
+
+  await t.test('RATE LIMITING - soft-deleted posts still count toward 10 posts/hour limit (anti-evasion)', async () => {
+    // User B currently has 10 posts. Soft-delete one of them.
+    const userBPosts = await prisma.post.findMany({
+      where: { authorId: USER_B_ID },
+      take: 1,
+    });
+    assert.equal(userBPosts.length, 1);
+
+    const deleteRes = await api
+      .delete(`/api/community/posts/${userBPosts[0].id}`)
+      .set('Authorization', `Bearer ${tokenUserB}`);
+    assert.equal(deleteRes.status, 200);
+
+    // Attempting to create an 11th post must STILL be rejected with 429
+    const resAfterDelete = await api
+      .post('/api/community/posts')
+      .set('Authorization', `Bearer ${tokenUserB}`)
+      .send({
+        topicId: topicJobSearch.id,
+        title: 'Post After Delete Attempt',
+        content: 'Attempting to evade rate limit via delete-and-repost.',
+      });
+
+    assert.equal(resAfterDelete.status, 429);
+    assert.equal(resAfterDelete.body.error.code, 'POST_RATE_LIMIT');
+  });
+
+  // ---------------------------------------------------------------------------
+  // 11. RISK-LANGUAGE SCANNING (SRS FR-4.6)
+  // ---------------------------------------------------------------------------
+  await t.test('RISK SCANNING - CRITICAL post triggers raiseFlag, returns resources, and never leaks flag terms', async (testCtx) => {
+    // Reset User A posts to ensure clean rate limit
+    await prisma.post.deleteMany({ where: { authorId: USER_A_ID } });
+
+    let flagCallInput: any = null;
+    testCtx.mock.method(crisisNotifier, 'raiseFlag', async (input: any) => {
+      flagCallInput = input;
+    });
+
+    const res = await api
+      .post('/api/community/posts')
+      .set('Authorization', `Bearer ${tokenUserA}`)
+      .send({
+        topicId: topicJobSearch.id,
+        title: 'Having a really hard time',
+        content: 'I want to kill myself tonight.',
+      });
+
+    assert.equal(res.status, 201);
+    assert.ok(flagCallInput, 'crisisNotifier.raiseFlag must be invoked');
+    assert.equal(flagCallInput.userId, USER_A_ID);
+    assert.equal(flagCallInput.source, CrisisSource.POST);
+    assert.equal(flagCallInput.sourceId, res.body.data.id);
+    assert.equal(flagCallInput.priority, CrisisPriority.CRITICAL);
+
+    // User response has crisis resources
+    assert.equal(res.body.data.crisis.show, true);
+    assert.ok(Array.isArray(res.body.data.crisis.resources));
+    assert.ok(res.body.data.crisis.resources.length > 0);
+
+    // Content is NOT hidden or modified
+    assert.equal(res.body.data.content, 'I want to kill myself tonight.');
+    const dbPost = await prisma.post.findUnique({ where: { id: res.body.data.id } });
+    assert.ok(dbPost);
+    assert.equal(dbPost.deletedAt, null);
+
+    // Recursive safety assertion: NEVER expose 'flag', 'flagged', or 'priority'
+    assertNoCrisisLeak(res.body);
+  });
+
+  await t.test('RISK SCANNING - HIGH comment triggers raiseFlag and returns crisis resources', async (testCtx) => {
+    // Create base post
+    const postRes = await api
+      .post('/api/community/posts')
+      .set('Authorization', `Bearer ${tokenUserA}`)
+      .send({
+        topicId: topicJobSearch.id,
+        title: 'A benign discussion thread',
+        content: 'Sharing thoughts on career transitions.',
+      });
+    assert.equal(postRes.status, 201);
+
+    let flagCallInput: any = null;
+    testCtx.mock.method(crisisNotifier, 'raiseFlag', async (input: any) => {
+      flagCallInput = input;
+    });
+
+    const commentRes = await api
+      .post(`/api/community/posts/${postRes.body.data.id}/comments`)
+      .set('Authorization', `Bearer ${tokenUserB}`)
+      .send({
+        content: "I don't want to wake up anymore.",
+      });
+
+    assert.equal(commentRes.status, 201);
+    assert.ok(flagCallInput, 'crisisNotifier.raiseFlag must be called for HIGH comment');
+    assert.equal(flagCallInput.userId, USER_B_ID);
+    assert.equal(flagCallInput.source, CrisisSource.POST);
+    assert.equal(flagCallInput.sourceId, commentRes.body.data.id);
+    assert.equal(flagCallInput.priority, CrisisPriority.HIGH);
+
+    assert.equal(commentRes.body.data.crisis.show, true);
+    assert.ok(commentRes.body.data.crisis.resources.length > 0);
+    assertNoCrisisLeak(commentRes.body);
+  });
+
+  await t.test('RISK SCANNING - harmless post does not trigger raiseFlag and returns crisis.show false', async (testCtx) => {
+    let flagCalled = false;
+    testCtx.mock.method(crisisNotifier, 'raiseFlag', async () => {
+      flagCalled = true;
+    });
+
+    const res = await api
+      .post('/api/community/posts')
+      .set('Authorization', `Bearer ${tokenUserA}`)
+      .send({
+        topicId: topicJobSearch.id,
+        title: 'Excited about learning TypeScript',
+        content: 'Practicing writing pure functions and unit tests!',
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(flagCalled, false);
+    assert.equal(res.body.data.crisis.show, false);
+    assert.deepEqual(res.body.data.crisis.resources, []);
+    assertNoCrisisLeak(res.body);
+  });
+
+  await t.test('RISK SCANNING - raiseFlag throwing error never blocks creation (HTTP 201)', async (testCtx) => {
+    testCtx.mock.method(crisisNotifier, 'raiseFlag', async () => {
+      throw new Error('Simulated network failure calling crisis notification');
+    });
+
+    const res = await api
+      .post('/api/community/posts')
+      .set('Authorization', `Bearer ${tokenUserA}`)
+      .send({
+        topicId: topicJobSearch.id,
+        title: 'Another difficult day',
+        content: 'I will end my life.',
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.data.crisis.show, true);
+    assert.ok(res.body.data.crisis.resources.length > 0);
+    assert.ok(res.body.data.id);
+    assertNoCrisisLeak(res.body);
   });
 });
