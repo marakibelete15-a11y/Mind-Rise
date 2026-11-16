@@ -18,7 +18,6 @@ import prisma, { ReactionType } from '@mindrise/database';
 import { AppError } from '../middleware/errorHandler.js';
 import { SupportedLanguage, pickLocalized } from '../utils/localize.js';
 import {
-  mapAuthor,
   mapPost,
   mapComment,
   PostResponseDTO,
