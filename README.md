@@ -95,6 +95,10 @@ Derived directly from the **MindRise Software Requirements Specification (SRS v1
 - [x] **Safety & Moderation (FR-6.1 – FR-7.5)**: Content reporting queues and an instant **Crisis Referral Pathway** prominently featuring Ethiopian emergency hotlines (**8335** Amanuel Mental Specialized Hospital and **952** National Emergency Medical Helpline).
 - [x] **Bilingual Localization (FR-5.1 – FR-5.2)**: Native Amharic (`am`) and English (`en`) interface toggling.
 
+> [!WARNING]
+> **Clinical & Cultural Review Notice (SRS 5.2, 6.3)**:
+> All self-assessment questionnaires, scoring weights, summary bands, and reflective texts currently in the codebase are placeholder materials based on screening conventions. Formal psychiatric and clinical validation by licensed Ethiopian mental health professionals and native Amharic linguists is strictly required before public production deployment.
+
 ### Out of Scope (Future Roadmap)
 
 - ❌ **Licensed Teletherapy Booking & Payment**: Scheduling paid clinical consultations or telehealth appointments.

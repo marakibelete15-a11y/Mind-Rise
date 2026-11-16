@@ -66,3 +66,20 @@ export function parseDateStringToDate(dateStr: string): Date {
 export function formatDateToDateString(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
+
+/**
+ * Returns the start and end Date bounds in UTC corresponding to 00:00:00.000 and
+ * 23:59:59.999 in Africa/Addis_Ababa (UTC+3) for a given instant or clock.
+ *
+ * WHY: Abuse protection (e.g. max 5 assessment attempts per day) requires querying
+ * records created during the local Ethiopian calendar day. Because Addis is UTC+3,
+ * the Addis day YYYY-MM-DD runs from (YYYY-MM-(DD-1) 21:00:00.000Z) to
+ * (YYYY-MM-DD 20:59:59.999Z).
+ */
+export function getAddisDayRange(instantOrClock?: Date | ClockFn): { startUtc: Date; endUtc: Date; addisDateStr: string } {
+  const addisDateStr = getAddisDateString(instantOrClock);
+  const [year, month, day] = addisDateStr.split('-').map(Number);
+  const startUtc = new Date(Date.UTC(year, month - 1, day - 1, 21, 0, 0, 0));
+  const endUtc = new Date(Date.UTC(year, month - 1, day, 20, 59, 59, 999));
+  return { startUtc, endUtc, addisDateStr };
+}

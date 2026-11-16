@@ -66,10 +66,166 @@ All endpoints below are planned and are mounted under `/api`.
 - `GET /users/me` — planned: fetch own pseudonymous profile.
 - `DELETE /users/me` — planned: request account deletion.
 
-### Assessments (SRS 2.2)
-- `GET /assessments/templates` — planned: list bilingual questionnaires.
-- `POST /assessments` — planned: submit encrypted assessment answers and receive non-diagnostic feedback.
-- `GET /assessments/:id` — planned: view own assessment result.
+### Assessments (SRS 2.2, FR-2.1 to FR-2.5) — Phase B3 Implemented
+
+#### `GET /api/assessments`
+- **Description**: Returns the latest version of questionnaire templates across domains (`STRESS`, `ANXIETY`, `LOW_MOTIVATION`, `EMOTIONAL_EXHAUSTION`, `LOSS_OF_PURPOSE`), with question count and localized titles.
+- **Authentication**: `Authorization: Bearer <JWT>` (or `x-dev-user-id` in dev). Allows `ACTIVE` and `RESTRICTED` users.
+- **Query Parameters**:
+  - `lang` *(optional)*: `'en'` or `'am'`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": [
+    {
+      "id": "11111111-1111-4000-a000-000000000001",
+      "domain": "STRESS",
+      "version": 1,
+      "title": "Stress & Overwhelm Checkup",
+      "description": "Confidential self-assessment to gauge current stress loads and emotional exhaustion.",
+      "questionCount": 4
+    }
+  ]
+}
+```
+
+#### `GET /api/assessments/:id`
+- **Description**: Retrieves a single questionnaire template and its ordered questions with localized answer options.
+- **Security & Privacy**: Strictly omits `scoring`, `riskThreshold`, and `isRiskItem` from the response payload.
+- **Authentication**: `Authorization: Bearer <JWT>`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "id": "11111111-1111-4000-a000-000000000001",
+    "domain": "STRESS",
+    "version": 1,
+    "title": "Stress & Overwhelm Checkup",
+    "description": "Confidential self-assessment to gauge current stress loads and emotional exhaustion.",
+    "questions": [
+      {
+        "id": "22222222-2222-4000-a000-000000000001",
+        "order": 1,
+        "text": "Over the last 2 weeks, how often have you felt unable to control important things in your life?",
+        "options": [
+          { "value": "rarely", "label": "Rarely" },
+          { "value": "sometimes", "label": "Sometimes" },
+          { "value": "often", "label": "Often" },
+          { "value": "always", "label": "Always" }
+        ]
+      }
+    ]
+  }
+}
+```
+- **Error Codes**: `404 TEMPLATE_NOT_FOUND`.
+
+#### `POST /api/assessments/:id/attempts`
+- **Description**: Submits answers for an assessment questionnaire. Computes score server-side, encrypts answers at rest using AES-256-GCM, triggers crisis escalation if safety threshold is exceeded, and returns localized non-diagnostic reflective feedback and universal disclaimer.
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Abuse Protection**: Maximum 5 attempts per user per template per local Addis Ababa day. Exceeding limit returns HTTP 429.
+- **Request Body**:
+```json
+{
+  "answers": [
+    { "questionId": "22222222-2222-4000-a000-000000000001", "value": "sometimes" },
+    { "questionId": "22222222-2222-4000-a000-000000000002", "value": "always" },
+    { "questionId": "22222222-2222-4000-a000-000000000003", "value": "rarely" },
+    { "questionId": "22222222-2222-4000-a000-000000000004", "value": "never" }
+  ]
+}
+```
+- **Status Code**: `201 Created`
+- **Response**:
+```json
+{
+  "data": {
+    "attempt": {
+      "id": "33333333-3333-4000-a000-000000000001",
+      "domain": "STRESS",
+      "score": 1,
+      "summary": "Your responses suggest you are currently managing daily pressures well, with mild and manageable stress levels.",
+      "disclaimer": "This tool does not provide a medical diagnosis and is not a substitute for professional care.",
+      "createdAt": "2026-11-16T10:00:00.000Z"
+    },
+    "crisis": {
+      "show": false,
+      "resources": []
+    }
+  }
+}
+```
+- **Error Codes**: `400 INVALID_ASSESSMENT_ANSWERS`, `404 TEMPLATE_NOT_FOUND`, `429 ASSESSMENT_DAILY_LIMIT`.
+
+#### `GET /api/assessments/attempts`
+- **Description**: Lists caller's assessment attempt history, newest first, with cursor-based pagination and optional domain filter.
+- **Privacy**: Decrypted answers are omitted from the list view.
+- **Authentication**: `Authorization: Bearer <JWT>`.
+- **Query Parameters**:
+  - `cursor` *(optional)*: UUID of last seen attempt.
+  - `limit` *(optional)*: Integer between 1 and 50 (default: 20).
+  - `domain` *(optional)*: Filter by `AssessmentDomain`.
+  - `lang` *(optional)*: `'en'` or `'am'`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "33333333-3333-4000-a000-000000000001",
+        "domain": "STRESS",
+        "score": 1,
+        "summaryKey": "LOW",
+        "summary": "Your responses suggest you are currently managing daily pressures well, with mild and manageable stress levels.",
+        "createdAt": "2026-11-16T10:00:00.000Z"
+      }
+    ],
+    "nextCursor": null
+  }
+}
+```
+
+#### `GET /api/assessments/attempts/:id`
+- **Description**: Retrieves a single assessment attempt owned by the caller. Answers are decrypted and returned only to the owning user.
+- **Privacy & IDOR Defense**: Returns 404 if the attempt belongs to another user.
+- **Authentication**: `Authorization: Bearer <JWT>`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "id": "33333333-3333-4000-a000-000000000001",
+    "domain": "STRESS",
+    "score": 1,
+    "summaryKey": "LOW",
+    "summary": "Your responses suggest you are currently managing daily pressures well, with mild and manageable stress levels.",
+    "disclaimer": "This tool does not provide a medical diagnosis and is not a substitute for professional care.",
+    "answers": [
+      { "questionId": "22222222-2222-4000-a000-000000000001", "value": "sometimes" }
+    ],
+    "createdAt": "2026-11-16T10:00:00.000Z"
+  }
+}
+```
+- **Error Codes**: `404 ATTEMPT_NOT_FOUND`.
+
+#### `DELETE /api/assessments/attempts/:id`
+- **Description**: Hard delete of an assessment attempt initiated by the owner (SRS 6.1: User data sovereignty).
+- **Authentication**: `Authorization: Bearer <JWT>`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "success": true,
+    "message": "Assessment attempt deleted successfully."
+  }
+}
+```
+- **Error Codes**: `404 ATTEMPT_NOT_FOUND`.
 
 ### Routines (SRS 2.3) — Phase B1 Implemented
 
@@ -409,16 +565,327 @@ Localization follows a clean three-tier priority cascade:
 - **Design Decision — No Completion Undo**:
   Completion records (`RoutineCompletion`) cannot be undone or revoked in this phase. This preserves mathematical monotonicity for points, prevents negative point reconciliation anomalies, and keeps streak histories tamper-resistant.
 
+### 7. Self-Assessment Design & Privacy Guarantees (Phase B3)
 
+- **Application-Layer Encryption at Rest (AES-256-GCM)**:
+  - User answers to assessment questions (`answers`) are encrypted at the application layer with AES-256-GCM using `encryptJson` before being stored in the database.
+  - The ciphertext payload begins with the version prefix `enc_v1:` containing the 12-byte initialization vector (IV), 16-byte authentication tag, and ciphertext.
+  - Plaintext answers are never stored in PostgreSQL and are never decrypted in batch list queries (`GET /api/assessments/attempts`).
+  - Decryption happens exclusively in `GET /api/assessments/attempts/:id` and only when requested by the owning user.
+- **Strictly Non-Diagnostic and Reflective Principle**:
+  - The assessment module explicitly rejects medical or psychiatric diagnostic labeling.
+  - Diagnostic labels (such as "depression", "clinical", "disorder", or "dysthymia") are strictly prohibited in summary bands and API responses.
+  - Results categorize scores into reflective feedback bands (`LOW`, `MODERATE`, `HIGH`) that validate the user's emotional experience and suggest gentle self-care habits.
+  - Every assessment attempt response mandates the inclusion of the universal bilingual disclaimer:
+    > *"This tool does not provide a medical diagnosis and is not a substitute for professional care."*
+    > *(Amharic: "ይህ መሳሪያ የህክምና ምርመራ ወይም ማረጋገጫ አይሰጥም፣ እንዲሁም የባለሙያ የህክምና እና የስነ-ልቦና እንክብካቤን አይተካም።")*
+- **Crisis Escalation Hook & Error Isolation**:
+  - Triage risk is triggered if the calculated `score >= template.riskThreshold` OR if any critical safety question (`isRiskItem: true`) is answered above its safe baseline (`value > 0`).
+  - When risk is flagged, the service calls `crisisService.raiseFlag` asynchronously after the attempt record is committed.
+  - The flag notification is wrapped in error-handling isolation (`try/catch`). Even if external notification or webhook delivery fails, the assessment submission succeeds with HTTP 201, returning the attempt result and active crisis resources.
+  - Decrypted answers are never logged. The internal field `riskFlagged` and the word `"flagged"` are never exposed to the client in the API response.
+- **Placeholder Content Notice (SRS 5.2, 6.3)**:
+  - Questionnaires, scoring keys, and summary text are preliminary placeholders based on standard psychological screening conventions.
+  - Formal clinical review and psychiatric validation by licensed Ethiopian mental health professionals and native Amharic linguists is required prior to public release.
+- **Zero Gamification Policy**:
+  - Assessments deliberately do not award points, streaks, or badges. This prevents clinical evaluations from being gamified or completed compulsively for rewards.
 
-### Community (SRS 2.4)
-- `GET /community/topics` — planned: list discussion spaces.
-- `GET /community/posts` — planned: list paginated anonymous posts.
-- `POST /community/posts` — planned: create an anonymous post.
-- `POST /community/posts/:id/comments` — planned: comment on a post.
+### Community (SRS 2.4, FR-4.1 to FR-4.5) — Phase B4 Implemented
 
-### Reports (SRS 2.5)
-- `POST /reports` — planned: report content or an account.
+#### `GET /api/community/topics`
+- **Description**: Returns discussion spaces with localized name, description, and count of active non-deleted posts.
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Query Parameters**:
+  - `lang` *(optional)*: `'en'` or `'am'`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": [
+    {
+      "id": "44444444-4444-4000-a000-000000000001",
+      "slug": "job-search-unemployment",
+      "name": "Job Search & Unemployment",
+      "description": "A safe space to discuss career uncertainty, job-hunting burnout, and professional resilience.",
+      "postCount": 12
+    }
+  ]
+}
+```
+
+#### `GET /api/community/posts`
+- **Description**: Returns the community post feed, ordered newest-first with cursor-based pagination and optional topic filter.
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Query Parameters**:
+  - `cursor` *(optional)*: UUID of last seen post.
+  - `limit` *(optional)*: Integer between 1 and 50 (default: 20).
+  - `topicId` *(optional)*: Filter by topic UUID.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "55555555-5555-4000-a000-000000000001",
+        "topicId": "44444444-4444-4000-a000-000000000001",
+        "title": "Navigating post-graduate job search stress",
+        "content": "It has been 3 months since graduation and feeling overwhelmed by applications.",
+        "isPinned": false,
+        "createdAt": "2026-11-16T10:00:00.000Z",
+        "author": {
+          "handle": "HabeshaPioneer",
+          "avatarUrl": "https://example.com/avatar.png"
+        },
+        "isMine": false,
+        "reactedByMe": false,
+        "supportCount": 3,
+        "commentCount": 5
+      }
+    ],
+    "nextCursor": null
+  }
+}
+```
+
+#### `POST /api/community/posts`
+- **Description**: Publishes a new anonymous post in a designated topic space.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive` (blocking `RESTRICTED` / `SUSPENDED` users with 403 `ACCOUNT_RESTRICTED`).
+- **Rate Limit**: Maximum 10 posts per user per hour (error: `POST_RATE_LIMIT`).
+- **Request Body**:
+```json
+{
+  "topicId": "44444444-4444-4000-a000-000000000001",
+  "title": "Navigating post-graduate job search stress",
+  "content": "It has been 3 months since graduation and feeling overwhelmed by applications."
+}
+```
+- **Validation**:
+  - `title`: 1–150 characters, trimmed, contains `[\p{L}\p{N}]/u`.
+  - `content`: 1–5,000 characters, trimmed, contains `[\p{L}\p{N}]/u`.
+  - Unknown fields rejected (`.strict()`).
+- **Status Code**: `201 Created`
+- **Response**: Mapped `Post` object enriched with `crisis` resources (show is `false` when benign).
+```json
+{
+  "data": {
+    "id": "55555555-5555-4000-a000-000000000001",
+    "topicId": "44444444-4444-4000-a000-000000000001",
+    "title": "Navigating post-graduate job search stress",
+    "content": "It has been 3 months since graduation and feeling overwhelmed by applications.",
+    "isPinned": false,
+    "createdAt": "2026-11-16T10:00:00.000Z",
+    "author": {
+      "handle": "HabeshaPioneer",
+      "avatarUrl": "https://example.com/avatar.png"
+    },
+    "isMine": true,
+    "reactedByMe": false,
+    "supportCount": 0,
+    "commentCount": 0,
+    "crisis": {
+      "show": false,
+      "resources": []
+    }
+  }
+}
+```
+- **Error Codes**: `400 VALIDATION_ERROR`, `403 ACCOUNT_RESTRICTED`, `404 TOPIC_NOT_FOUND`, `429 POST_RATE_LIMIT`.
+
+#### `GET /api/community/posts/:id`
+- **Description**: Retrieves a single community post. Excludes soft-deleted posts (`deletedAt: null`).
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Status Code**: `200 OK`
+- **Response**: Mapped `Post` object.
+- **Error Codes**: `404 POST_NOT_FOUND`.
+
+#### `DELETE /api/community/posts/:id`
+- **Description**: Author-initiated soft delete of a post. Sets `deletedAt: new Date()` to preserve moderation evidence while hiding the post from all public feeds and searches.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`. Only owning author can delete.
+- **Status Code**: `200 OK`
+- **Response**: `{ "data": { "success": true, "message": "Post deleted successfully." } }`
+- **Error Codes**: `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`.
+
+#### `GET /api/community/posts/:id/comments`
+- **Description**: Lists comments on a post, ordered oldest-first with cursor pagination. Excludes soft-deleted comments.
+- **Authentication**: `Authorization: Bearer <JWT>`. Allows `ACTIVE` and `RESTRICTED` users.
+- **Query Parameters**:
+  - `cursor` *(optional)*: UUID of last seen comment.
+  - `limit` *(optional)*: Integer between 1 and 50 (default: 20).
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "66666666-6666-4000-a000-000000000001",
+        "postId": "55555555-5555-4000-a000-000000000001",
+        "content": "Hang in there! The first few months are the hardest.",
+        "createdAt": "2026-11-16T10:15:00.000Z",
+        "author": {
+          "handle": "AddisSeeker",
+          "avatarUrl": null
+        },
+        "isMine": false
+      }
+    ],
+    "nextCursor": null
+  }
+}
+```
+- **Error Codes**: `404 POST_NOT_FOUND`.
+
+#### `POST /api/community/posts/:id/comments`
+- **Description**: Adds an anonymous comment to a post.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`.
+- **Rate Limit**: Maximum 30 comments per user per hour (error: `COMMENT_RATE_LIMIT`).
+- **Request Body**:
+```json
+{
+  "content": "Hang in there! The first few months are the hardest."
+}
+```
+- **Validation**:
+  - `content`: 1–1,000 characters, trimmed, contains `[\p{L}\p{N}]/u`.
+  - Unknown fields rejected (`.strict()`).
+- **Status Code**: `201 Created`
+- **Response**: Mapped `Comment` object enriched with `crisis` resources.
+```json
+{
+  "data": {
+    "id": "66666666-6666-4000-a000-000000000001",
+    "postId": "55555555-5555-4000-a000-000000000001",
+    "content": "Hang in there! The first few months are the hardest.",
+    "createdAt": "2026-11-16T10:15:00.000Z",
+    "author": {
+      "handle": "AddisSeeker",
+      "avatarUrl": null
+    },
+    "isMine": true,
+    "crisis": {
+      "show": false,
+      "resources": []
+    }
+  }
+}
+```
+- **Error Codes**: `400 VALIDATION_ERROR`, `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`, `429 COMMENT_RATE_LIMIT`.
+
+#### `DELETE /api/community/comments/:id`
+- **Description**: Author-initiated soft delete of a comment (`deletedAt: new Date()`).
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`. Only owning author can delete.
+- **Status Code**: `200 OK`
+- **Response**: `{ "data": { "success": true, "message": "Comment deleted successfully." } }`
+- **Error Codes**: `403 ACCOUNT_RESTRICTED`, `404 COMMENT_NOT_FOUND`.
+
+#### `PUT /api/community/posts/:id/reactions/support`
+- **Description**: Idempotently adds a `SUPPORT` reaction to a post. Handled with database unique constraint collision resolution (`P2002`).
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "supportCount": 4,
+    "reactedByMe": true
+  }
+}
+```
+- **Error Codes**: `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`.
+
+#### `DELETE /api/community/posts/:id/reactions/support`
+- **Description**: Idempotently removes a `SUPPORT` reaction from a post.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive`.
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "supportCount": 3,
+    "reactedByMe": false
+  }
+}
+```
+- **Error Codes**: `403 ACCOUNT_RESTRICTED`, `404 POST_NOT_FOUND`.
+
+### 8. Community Privacy & Architecture Design (Phase B4)
+
+- **Author Privacy Mapper Pattern**:
+  - The single gatekeeper transforming database records into API DTOs is `community.mapper.ts`.
+  - Prisma queries use explicit `select` clauses and are forbidden from selecting `VerifiedIdentity` or any foreign user IDs.
+  - The author object strictly exposes `{ handle: string, avatarUrl: string | null }`. Private fields (`userId`, `authorId`, `firstName`, `lastName`, `phone`, `email`, `bio`) are structurally impossible to leak.
+- **Deleted User Tombstone Rule**:
+  - When an author deletes their account, foreign keys cascade as `onDelete: SetNull`.
+  - The mapper detects null authors and renders `{ handle: "[Deleted User]", avatarUrl: null }`, maintaining discussion thread integrity without breaking UI layouts.
+- **Soft Deletion Rationale**:
+  - Author and moderator deletions set `deletedAt = new Date()` rather than executing `DELETE FROM`.
+  - Soft-deleted content is filtered out of active queries (`deletedAt: null`).
+  - Preserving the underlying row in PostgreSQL guarantees that Phase B5 safety reports and moderation incident histories retain their evidential integrity.
+- **Frontend Security Guidance**:
+  - Community text from peers must always be rendered as **untrusted plain text** (e.g. React default text interpolation `{post.content}`).
+  - Under no circumstances should user content be rendered via `dangerouslySetInnerHTML` or HTML parsers, completely neutralizing stored Cross-Site Scripting (XSS) vectors.
+
+### Reports (SRS 2.5, FR-4.4) — Phase B5 Implemented
+
+#### `POST /api/reports`
+- **Description**: Submits a user moderation report against an active community post or comment.
+- **Authentication**: `Authorization: Bearer <JWT>` + `requireActive` (403 for `RESTRICTED` or `SUSPENDED` users).
+- **Rate Limit**: Maximum 20 reports per user per hour (error: `REPORT_RATE_LIMIT`).
+- **Request Body**:
+```json
+{
+  "targetType": "POST",
+  "targetId": "55555555-5555-4000-a000-000000000001",
+  "reason": "Harassment or inappropriate language."
+}
+```
+- **Validation**:
+  - `targetType`: Required enum, either `'POST'` or `'COMMENT'`. (ACCOUNT reports are disallowed per privacy architecture).
+  - `targetId`: Required valid UUID.
+  - `reason`: Optional string, trimmed, max 500 characters, must contain alphanumeric characters if provided.
+  - Unknown fields rejected (`.strict()`).
+- **Status Code**: `200 OK`
+- **Response**:
+```json
+{
+  "data": {
+    "received": true
+  }
+}
+```
+- **Idempotency**: Submitting duplicate reports for the same target by the same reporter returns `200 OK` with `{ "data": { "received": true } }` without creating duplicate database rows or re-triggering hooks.
+- **Error Codes**:
+  - `400 VALIDATION_ERROR`: Malformed input or forbidden fields.
+  - `400 CANNOT_REPORT_OWN_CONTENT`: Attempting to report content authored by oneself.
+  - `401 INVALID_TOKEN`: Missing or invalid auth credentials.
+  - `403 ACCOUNT_RESTRICTED`: Caller's account status is not `ACTIVE`.
+  - `404 TARGET_NOT_FOUND`: Target post or comment does not exist or has been soft-deleted.
+  - `429 REPORT_RATE_LIMIT`: Exceeded the quota of 20 reports per hour.
+
+### 9. Risk Scanning & Reports Design (Phase B5)
+
+- **Non-Blocking Safety Rule (SRS FR-4.6)**:
+  - Safety keyword/regex scanning and `crisisService.raiseFlag` notifications must NEVER delay, abort, or prevent content creation.
+  - Even if notification services or downstream queues fail, the post or comment creation completes with HTTP 201, safely returning the created content alongside localized emergency support resources.
+- **Zero Flag Disclosure Policy**:
+  - The API deliberately never reveals to the user whether their content triggered a risk flag or was flagged by the system.
+  - The response payload strictly omits internal terms like `"flag"`, `"flagged"`, and priority ratings (`"CRITICAL"`, `"HIGH"`).
+  - Instead, constructive, non-stigmatizing crisis resources are provided in `{ crisis: { show: boolean, resources: [...] } }`.
+- **Placeholder Catalog Notice (SRS 6.3, FR-6.4)**:
+  - The risk phrase lists in `server/src/content/risk-phrases.ts` are provisional placeholders based on mental health safety guidelines.
+  - A keyword scan functions solely as a safety net, NOT as a psychological diagnostic tool or clinician substitute; it will inevitably have both false positives and false negatives.
+  - Formal clinical review and psychiatric validation by licensed Ethiopian mental health professionals and native Amharic linguists is required prior to production release.
+- **Strict Reporter Anonymity & Privacy**:
+  - The report response is strictly `{ "data": { "received": true } }`.
+  - Reporter user IDs are recorded internally in PostgreSQL for moderation audit integrity, but are never returned in HTTP responses or shared with reported authors.
+  - Normal users have no access to list or query reports.
+- **Why ACCOUNT Reports Are Not Exposed**:
+  - MindRise's peer community architecture strictly conceals user IDs from peers to protect user privacy (SRS FR-4.1).
+  - Exposing an `ACCOUNT` report endpoint would require exposing account identifiers to the client. Instead, users report specific posts or comments, and moderators navigate to the author account via the reported content.
+- **Part A Moderation Integration Hook (`onReportCreated`)**:
+  - After each new report is persisted, `reportHook.onReportCreated(report)` is called.
+  - Part A's automated threshold monitoring and auto-restriction system (SRS FR-7.5) plugs directly into this hook to count reports within rolling time windows and apply automated safety measures.
 
 ### Crisis (SRS 2.5)
 - `GET /crisis/resources` — planned: list verified local crisis hotlines.
@@ -426,3 +893,4 @@ Localization follows a clean three-tier priority cascade:
 ### Moderation (SRS 2.5)
 - `GET /moderation/reports` — planned: view moderation queue.
 - `POST /moderation/actions` — planned: record a moderation action.
+
