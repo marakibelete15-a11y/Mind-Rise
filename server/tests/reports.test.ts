@@ -64,10 +64,10 @@ function request(serverUrl: string) {
   };
 }
 
-// Test User UUIDs
-const USER_A_ID = '00000000-0000-4000-a000-0000000000a1';
-const USER_B_ID = '00000000-0000-4000-a000-0000000000b2';
-const RESTRICTED_USER_ID = '00000000-0000-4000-a000-0000000000c3';
+// Test User UUIDs (isolated to prevent collision with parallel community tests)
+const USER_A_ID = '00000000-0000-4000-a000-0000000000d1';
+const USER_B_ID = '00000000-0000-4000-a000-0000000000e2';
+const RESTRICTED_USER_ID = '00000000-0000-4000-a000-0000000000f3';
 
 test('User Moderation Reports Integration & Security Tests (SRS FR-4.4)', async (t) => {
   const app = createApp();
