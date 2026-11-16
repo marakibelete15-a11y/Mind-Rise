@@ -252,9 +252,9 @@ export class ProgressService {
           })),
         };
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // If a race condition fired P2002 on concurrent creation, handle idempotently
-      if (err?.code === 'P2002') {
+      if (typeof err === 'object' && err !== null && 'code' in err && (err as { code: string }).code === 'P2002') {
         const existingCompletion = await prisma.routineCompletion.findUnique({
           where: {
             routineId_completedDate: {

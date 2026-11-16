@@ -4,6 +4,7 @@ import { sendSuccess } from '../utils/response.js';
 import { parsePagination } from '../utils/pagination.js';
 import { resolveLanguage } from '../utils/localize.js';
 import { routinesService } from '../services/routines.service.js';
+import { progressService } from '../services/progress.service.js';
 import {
   createRoutineSchema,
   updateRoutineSchema,
@@ -94,3 +95,27 @@ export const deleteRoutine = asyncHandler(async (req: Request, res: Response) =>
   const deleted = await routinesService.deleteRoutine(userId, id);
   sendSuccess(res, { message: 'Routine deleted successfully', id: deleted.id }, 200);
 });
+
+/**
+ * GET /routines/today
+ * Returns caller's active routines annotated with completedToday boolean.
+ */
+export const getTodayRoutines = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const routines = await routinesService.getTodayRoutines(userId);
+  sendSuccess(res, routines, 200);
+});
+
+/**
+ * POST /routines/:id/checkin
+ * Records daily habit completion, awards points, updates streaks, and unlocks badges.
+ * Requires authenticate + requireActive.
+ */
+export const checkInRoutine = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const { id } = routineIdParamSchema.parse(req.params);
+
+  const result = await progressService.checkIn(userId, id);
+  sendSuccess(res, result, 200);
+});
+
