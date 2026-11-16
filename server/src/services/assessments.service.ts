@@ -352,11 +352,8 @@ export async function listUserAttempts(
   }));
 
   return {
-    data,
-    pagination: {
-      nextCursor,
-      limit,
-    },
+    items: data,
+    nextCursor,
   };
 }
 
