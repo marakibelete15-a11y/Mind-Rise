@@ -25,13 +25,27 @@ import {
   AnswerSubmission,
   ScoringQuestionInput,
 } from './assessment-scoring.js';
-import { raiseFlag } from './crisis.service.js';
+import * as crisisService from './crisis.service.js';
 import {
   getLocalizedSummary,
   getLocalizedDisclaimer,
   getLocalizedEmergencyFallback,
   OPTION_LABELS,
 } from '../content/assessment-summaries.js';
+
+/**
+ * Crisis notifier adapter.
+ * Allows Part B assessment attempts to invoke Part A's crisis service while
+ * remaining cleanly spyable and mockable in tests without touching Part A files.
+ */
+export const crisisNotifier = {
+  raiseFlag: (input: {
+    userId: string;
+    source: CrisisSource;
+    sourceId: string;
+    priority: CrisisPriority;
+  }) => crisisService.raiseFlag(input),
+};
 
 export interface AssessmentAttemptSummaryDTO {
   id: string;
@@ -237,7 +251,7 @@ export async function submitAttempt(
   // Safety escalation hook (executed AFTER attempt is safely persisted)
   if (riskFlagged) {
     try {
-      await raiseFlag({
+      await crisisNotifier.raiseFlag({
         userId,
         source: CrisisSource.ASSESSMENT,
         sourceId: attempt.id,

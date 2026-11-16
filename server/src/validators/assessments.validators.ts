@@ -19,10 +19,12 @@ export const submitAttemptSchema = z
           .object({
             questionId: z.string().uuid('Each questionId must be a valid UUID.'),
             value: z.union([z.string().min(1), z.number()]),
+            score: z.unknown().optional(), // Client-supplied score is accepted by validator but strictly ignored by scoring
           })
           .strict()
       )
       .min(1, 'At least one answer must be provided.'),
+    score: z.unknown().optional(), // Top-level client score is also ignored
   })
   .strict();
 
