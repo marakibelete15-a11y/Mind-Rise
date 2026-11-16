@@ -6,6 +6,8 @@ import badgesRouter from './badges.routes.js';
 const router=Router();
 router.use('/health',healthRouter);
 const api=Router(); api.use('/auth',authRouter); api.use('/users',usersRouter); api.use('/assessments',assessmentsRouter); api.use('/routines',routinesRouter); api.use('/progress',progressRouter); api.use('/badges',badgesRouter); api.use('/community',communityRouter); api.use('/reports',reportsRouter); api.use('/crisis',crisisRouter); api.use('/moderation',moderationRouter); router.use('/api',api);
-// Mount routines at root router level as well so both /routines and /api/routines work seamlessly
+// Mount routines, progress, and badges at root router level as well so both root and /api work seamlessly
 router.use('/routines', routinesRouter);
+router.use('/progress', progressRouter);
+router.use('/badges', badgesRouter);
 export default router;
