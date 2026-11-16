@@ -4,6 +4,11 @@ import {
   SupportedLanguage,
   localizeStarterRoutine,
 } from '../utils/localize.js';
+import {
+  ClockFn,
+  getAddisDateString,
+  parseDateStringToDate,
+} from '../utils/dates.js';
 import { CreateRoutineInput, UpdateRoutineInput } from '../validators/routines.validators.js';
 
 /**
@@ -18,6 +23,43 @@ import { CreateRoutineInput, UpdateRoutineInput } from '../validators/routines.v
 const MAX_ACTIVE_ROUTINES = 20;
 
 export class RoutinesService {
+  /**
+   * Retrieves active, non-deleted routines for the caller, annotated with completedToday boolean.
+   *
+   * WHY: The daily dashboard needs to show the user which habits they still need to do today
+   * and which ones are already checked off, based on the Africa/Addis_Ababa calendar day.
+   */
+  async getTodayRoutines(userId: string, clock?: ClockFn) {
+    const todayAddisStr = getAddisDateString(clock);
+    const todayDate = parseDateStringToDate(todayAddisStr);
+
+    const routines = await prisma.routine.findMany({
+      where: {
+        userId,
+        status: RoutineStatus.ACTIVE,
+        deletedAt: null,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    const routineIds = routines.map((r) => r.id);
+    const completions = await prisma.routineCompletion.findMany({
+      where: {
+        routineId: { in: routineIds },
+        completedDate: todayDate,
+      },
+    });
+
+    const completedRoutineIds = new Set(completions.map((c) => c.routineId));
+
+    return routines.map((r) => ({
+      ...r,
+      completedToday: completedRoutineIds.has(r.id),
+    }));
+  }
+
   /**
    * Retrieves curated starter routines localized to the requested language.
    *
